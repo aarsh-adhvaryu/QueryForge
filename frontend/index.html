@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QueryForge — Visual Similarity Search</title>
+  <!--
+    Scaffold frontend: React via CDN (no build step) so it runs straight from the backend.
+    A production setup would migrate this to a Vite + React project under frontend/src.
+  -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; background: #0f1117; color: #e6e6e6; }
+    header { padding: 16px 24px; border-bottom: 1px solid #222; display: flex; align-items: center; gap: 16px; }
+    h1 { font-size: 18px; margin: 0; }
+    .badge { font-size: 12px; color: #9aa; background: #161922; padding: 4px 10px; border-radius: 12px; }
+    main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+    .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+    .card { background: #161922; border: 1px solid #232733; border-radius: 10px; overflow: hidden; cursor: pointer; transition: border-color .15s; }
+    .card:hover { border-color: #3b82f6; }
+    .card img { width: 100%; height: 120px; object-fit: cover; display: block; }
+    .card .meta { padding: 8px 10px; font-size: 12px; }
+    .card .name { font-weight: 600; }
+    .card .sub { color: #8a93a6; margin-top: 2px; }
+    .score { color: #4ade80; }
+    button, input[type=file] { font: inherit; }
+    button { background: #3b82f6; color: white; border: 0; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+    h2 { font-size: 15px; color: #c7cdd9; margin: 24px 0 10px; }
+    .latency { color: #fbbf24; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const API = "";  // same origin
+
+    function Card({ item, onClick }) {
+      return (
+        <div className="card" onClick={onClick}>
+          <img src={API + item.image_url} alt={item.name} />
+          <div className="meta">
+            <div className="name">{item.name}</div>
+            <div className="sub">{item.category} · ${item.price}
+              {item.score !== undefined && <span className="score"> · {item.score.toFixed(3)}</span>}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [health, setHealth] = useState(null);
+      const [catalog, setCatalog] = useState([]);
+      const [results, setResults] = useState(null);
+      const [latency, setLatency] = useState(null);
+
+      useEffect(() => {
+        fetch(API + "/health").then(r => r.json()).then(setHealth).catch(() => {});
+        fetch(API + "/catalog?limit=24").then(r => r.json()).then(d => setCatalog(d.items)).catch(() => {});
+      }, []);
+
+      async function searchById(id) {
+        const d = await (await fetch(`${API}/search/id/${id}?k=8`)).json();
+        setResults(d.results); setLatency(d.latency_ms);
+      }
+      async function searchByImage(file) {
+        const d = await (await fetch(`${API}/search/image?k=8`, { method: "POST", body: file })).json();
+        setResults(d.results); setLatency(d.latency_ms);
+      }
+
+      return (
+        <div>
+          <header>
+            <h1>QueryForge · Visual Similarity Search</h1>
+            {health && <span className="badge">{health.vector_count} vectors · dim {health.dim} · {health.metric} · top layer {health.top_layer}</span>}
+          </header>
+          <main>
+            <div className="row">
+              <label><strong>Upload an image:</strong>&nbsp;
+                <input type="file" accept="image/*"
+                  onChange={e => e.target.files[0] && searchByImage(e.target.files[0])} />
+              </label>
+              <span style={{ color: "#8a93a6" }}>…or click any product below to find similar items.</span>
+            </div>
+
+            {results && (
+              <div>
+                <h2>Results {latency != null && <span className="latency">· query {latency} ms</span>}</h2>
+                <div className="grid">{results.map(r => <Card key={r.id} item={r} />)}</div>
+              </div>
+            )}
+
+            <h2>Catalog</h2>
+            <div className="grid">{catalog.map(it => <Card key={it.id} item={it} onClick={() => searchById(it.id)} />)}</div>
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

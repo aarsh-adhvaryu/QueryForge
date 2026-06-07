@@ -1,0 +1,12 @@
+# QueryForge demo backend dependencies.
+fastapi
+uvicorn[standard]
+httpx            # used by the in-process smoke test (TestClient)
+
+# /search/image accepts the raw image bytes as the request body, so python-multipart is NOT
+# required. Install it only if you switch to multipart/form-data uploads:
+# python-multipart
+
+# Also needs the pipeline deps (numpy, pillow) — see ../python/requirements.txt — and the
+# `queryforge` extension module built via CMake (-DQF_BUILD_PYTHON=ON), with build/python and
+# the python/ dir on PYTHONPATH.

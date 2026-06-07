@@ -12,31 +12,10 @@ from __future__ import annotations
 import os
 import tempfile
 
-import numpy as np
 import queryforge as qf
 
 from qf_pipeline import HistogramEmbedder, build_catalog, search_similar
-
-# Category name -> base RGB color. The synthetic images are this color plus noise.
-CATEGORIES = {
-    "red_shoe":   (220, 40, 40),
-    "blue_shirt": (40, 60, 220),
-    "green_bag":  (40, 200, 80),
-    "yellow_hat": (235, 220, 50),
-}
-PER_CATEGORY = 15
-IMG_SIZE = 48
-
-
-def make_image(path: str, base_rgb, seed: int) -> None:
-    """Write a noisy solid-color PNG, so same-category images look alike but aren't identical."""
-    from PIL import Image
-
-    rng = np.random.default_rng(seed)
-    base = np.array(base_rgb, dtype=np.float32)
-    noise = rng.normal(0, 18, size=(IMG_SIZE, IMG_SIZE, 3)).astype(np.float32)
-    arr = np.clip(base[None, None, :] + noise, 0, 255).astype(np.uint8)
-    Image.fromarray(arr, "RGB").save(path)
+from qf_pipeline.synthetic import CATEGORIES, generate_catalog, make_image
 
 
 def main() -> int:
@@ -44,19 +23,7 @@ def main() -> int:
     workdir = tempfile.mkdtemp(prefix="qf_pipeline_")
 
     # 1. Generate a synthetic catalog of images + metadata.
-    products_meta = []
-    seed = 0
-    for category, color in CATEGORIES.items():
-        for j in range(PER_CATEGORY):
-            path = os.path.join(workdir, f"{category}_{j}.png")
-            make_image(path, color, seed)
-            seed += 1
-            products_meta.append({
-                "name": f"{category.replace('_', ' ').title()} #{j}",
-                "category": category,
-                "price": round(19.99 + (seed % 7) * 5, 2),
-                "image_path": path,
-            })
+    products_meta = generate_catalog(workdir, per_category=15)
     print(f"generated {len(products_meta)} synthetic product images in {workdir}")
 
     # 2. Build the index + metadata catalog (HistogramEmbedder + cosine).

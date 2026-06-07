@@ -5,6 +5,28 @@ behind decisions. Newest entries on top.
 
 ---
 
+## A7 — FastAPI backend + React frontend (bucket A complete)
+
+- **Built:** a FastAPI backend serving the proposal's endpoints over a mock catalog, and a
+  self-contained React (CDN) frontend it serves at `/`. Verified end-to-end three ways: in-process
+  TestClient (`python_api` CTest), and a live uvicorn server hit with curl (health, catalog,
+  frontend HTML, product images all 200). `/search/image` returns 8/8 same-category in ~7 ms.
+- **Dependency-avoidance decision:** `/search/image` takes the raw image bytes as the request body
+  instead of multipart/form-data, so we don't need `python-multipart`. The frontend just does
+  `fetch(url, {body: file})`. Fewer deps, fully functional.
+- **Frontend scope:** a single `index.html` with React via CDN — runs with zero `npm install`, so
+  the demo is immediately runnable. Production would migrate to a Vite project; logged, not needed
+  for scaffold/dry-run.
+- **Bug caught:** SQLite connections are thread-bound by default; the web server serves requests on
+  a different thread than where the catalog was built → `sqlite3.ProgrammingError`. Fixed with
+  `check_same_thread=False`, which fits our static-build/concurrent-read model (read-mostly).
+- **State:** bucket A is complete — the full vertical slice works on CPU with synthetic data:
+  image → embedding → HNSW search → SQLite metadata → JSON API → React grid. Bucket B (real CLIP
+  model + 500K dataset + tuning + final benchmarks on the local 5070 Ti / Core Ultra 9) is what
+  remains, and every seam for it already exists.
+
+---
+
 ## A6 — embedding pipeline scaffold + CPU dry-run
 
 - **Built:** `python/qf_pipeline/` — a pluggable `Embedder` abstraction, a SQLite metadata store,

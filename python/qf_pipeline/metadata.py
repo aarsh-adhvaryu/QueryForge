@@ -22,7 +22,10 @@ class Product:
 
 class MetadataStore:
     def __init__(self, path: str = ":memory:"):
-        self.conn = sqlite3.connect(path)
+        # check_same_thread=False: the index is built once then served read-only across the web
+        # server's worker threads (our "static build + concurrent reads" model). SQLite serializes
+        # access internally, which is fine for this read-mostly demo.
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.execute(
             """CREATE TABLE IF NOT EXISTS products(
                    id         INTEGER PRIMARY KEY,

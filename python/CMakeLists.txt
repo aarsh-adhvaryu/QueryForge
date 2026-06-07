@@ -27,4 +27,16 @@ if(QF_BUILD_TESTS)
            COMMAND ${QF_PYTHON} -m qf_pipeline.dry_run)
   set_tests_properties(python_pipeline PROPERTIES
     ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:queryforge_py>:${CMAKE_CURRENT_SOURCE_DIR}")
+
+  # FastAPI backend smoke test — only if the web stack is installed.
+  execute_process(COMMAND ${QF_PYTHON} -c "import fastapi, httpx"
+                  RESULT_VARIABLE _qf_web_missing OUTPUT_QUIET ERROR_QUIET)
+  if(_qf_web_missing EQUAL 0)
+    add_test(NAME python_api COMMAND ${QF_PYTHON} -m backend.smoke_test)
+    set_tests_properties(python_api PROPERTIES
+      ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:queryforge_py>:${CMAKE_CURRENT_SOURCE_DIR}"
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+  else()
+    message(STATUS "Skipping python_api test (fastapi/httpx not installed)")
+  endif()
 endif()

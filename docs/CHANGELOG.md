@@ -2,6 +2,17 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## A7 — FastAPI backend + React frontend (mock data) — bucket A complete
+- `backend/app.py`: FastAPI service with `/health`, `/catalog`, `/search/id/{id}`,
+  `POST /search/image` (raw image bytes), `/images/*`, and serves the frontend at `/`. Builds a
+  mock catalog (synthetic images + HistogramEmbedder) on startup; reports real query latency.
+- `frontend/index.html`: self-contained React (CDN) UI — upload, catalog browse, results grid,
+  latency display. No build step; served by the backend.
+- `backend/smoke_test.py` exercises all endpoints via FastAPI TestClient → `python_api` CTest case
+  (23 tests with Python on). Verified live via uvicorn + curl.
+- Fixed SQLite cross-thread use for the web server (`check_same_thread=False`). Factored synthetic
+  image generation into `qf_pipeline/synthetic.py` (shared by dry-run and backend).
+
 ## A6 — Embedding pipeline scaffold + CPU dry-run
 - `python/qf_pipeline/` package: pluggable `Embedder` (dependency-free `HistogramEmbedder` for the
   CPU dry-run; real `ClipEmbedder` with lazy torch/open_clip for the GPU/laptop), SQLite-backed

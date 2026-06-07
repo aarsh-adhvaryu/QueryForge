@@ -4,9 +4,10 @@ A from-scratch **C++ HNSW vector search engine** — built to find the most *sim
 vectors (e.g. image or text embeddings) among millions, in milliseconds, instead of
 scanning them all.
 
-> **Status:** early scaffold (stage A0). The build, test runner, and benchmark runner
-> are wired up; the engine itself lands stage by stage. See
-> [docs/CHANGELOG.md](docs/CHANGELOG.md) for what exists today.
+> **Status:** bucket A complete — the full vertical slice works on CPU with synthetic data:
+> image → embedding → HNSW search (95.9% Recall@10) → SQLite metadata → FastAPI → React grid,
+> with `.qfx` persistence and Python bindings. Remaining: the real CLIP model + 500K dataset +
+> final tuning/benchmarks on the local GPU machine. See [docs/CHANGELOG.md](docs/CHANGELOG.md).
 
 ## What this is (in one paragraph)
 
@@ -52,6 +53,16 @@ ctest --test-dir build         # run the tests
 ```
 
 Useful toggles: `-DQF_BUILD_BENCHMARKS=OFF` or `-DQF_BUILD_TESTS=OFF`.
+
+### Run the demo (Python bindings + web app)
+
+```bash
+cmake -S . -B build -DQF_BUILD_PYTHON=ON && cmake --build build -j   # builds the queryforge module
+pip install -r backend/requirements.txt                              # fastapi, uvicorn, httpx
+PYTHONPATH=build/python:python uvicorn backend.app:app               # then open http://127.0.0.1:8000/
+```
+
+See [backend/README.md](backend/README.md) and [python/README.md](python/README.md).
 
 ## Documentation
 

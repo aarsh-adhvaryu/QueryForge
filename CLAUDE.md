@@ -24,10 +24,19 @@ Stages follow the plan in `docs/architecture.md` and the project plan. Done so f
 - **A2** — `NswIndex`: single-layer Navigable Small World graph + recall harness.
 - **A3** — `HnswIndex`: full multi-layer HNSW + diversity heuristic. **Recall@10 = 95.9%** on
   synthetic data (N=10k, dim=128, M=16, ef=200), visiting ~2% of nodes. Target met.
+- **A4** — persistence: binary `.qfx` save + mmap load (~1000–1570× faster than rebuild).
+- **A5** — Pybind11 bindings: `queryforge.HnswIndex` (NumPy in, ids/distances out).
+- **A6** — embedding pipeline scaffold: pluggable `Embedder` (HistogramEmbedder for the CPU
+  dry-run; `ClipEmbedder` for the GPU/laptop) + SQLite metadata + dry-run.
+- **A7** — FastAPI backend + React frontend over a mock catalog; full vertical slice works.
 
-**Resume at A4 — persistence:** binary serialization of the HNSW graph + mmap-based fast load, and
-a metadata store (SQLite default; Postgres optional). Then A5 Pybind11, A6 CLIP embedding scaffold,
-A7 FastAPI + React. See `docs/CHANGELOG.md` for details and `docs/BASELINES.md` for numbers.
+**Bucket A is COMPLETE.** What remains is **bucket B (needs the laptop/GPU):** download the real
+500K-image dataset, run real CLIP embeddings (swap `HistogramEmbedder` → `ClipEmbedder`), tune the
+index on real data, and re-measure final benchmarks on the local 5070 Ti / Core Ultra 9. Also a
+queued perf pass: fix the O(N²) build (reusable visited array) and add parallel build. See
+`docs/CHANGELOG.md` and `docs/BASELINES.md`.
+
+Build everything (incl. Python module + web tests): `cmake -S . -B build -DQF_BUILD_PYTHON=ON`.
 
 ## Build / test / run
 
