@@ -1,0 +1,224 @@
+#include "queryforge/hnsw.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <queue>
+
+namespace queryforge {
+namespace {
+
+void l2_normalize(const float* in, float* out, std::size_t dim) {
+  const float norm = std::sqrt(dot(in, in, dim));
+  if (norm == 0.0f) {
+    std::copy(in, in + dim, out);
+    return;
+  }
+  const float inv = 1.0f / norm;
+  for (std::size_t i = 0; i < dim; ++i) out[i] = in[i] * inv;
+}
+
+struct CloserFirst {  // min-heap: top() is nearest
+  bool operator()(const Neighbor& a, const Neighbor& b) const { return a.distance > b.distance; }
+};
+struct FartherFirst {  // max-heap: top() is current worst kept result
+  bool operator()(const Neighbor& a, const Neighbor& b) const { return a.distance < b.distance; }
+};
+
+}  // namespace
+
+HnswIndex::HnswIndex(std::size_t dim, std::size_t M, std::size_t ef_construction, Metric metric,
+                     std::uint32_t seed)
+    : dim_(dim),
+      M_(M),
+      M0_(2 * M),
+      ef_construction_(ef_construction),
+      metric_(metric),
+      mL_(1.0 / std::log(static_cast<double>(M))),
+      rng_(seed) {}
+
+float HnswIndex::distance(const float* a, const float* b) const noexcept {
+  if (metric_ == Metric::Cosine) return 1.0f - dot(a, b, dim_);
+  return l2_sqr(a, b, dim_);
+}
+
+int HnswIndex::random_layer() {
+  std::uniform_real_distribution<double> u(0.0, 1.0);
+  double r = u(rng_);
+  if (r < std::numeric_limits<double>::min()) r = std::numeric_limits<double>::min();
+  return static_cast<int>(std::floor(-std::log(r) * mL_));
+}
+
+std::uint32_t HnswIndex::greedy_search_layer(const float* query, std::uint32_t entry, int layer,
+                                             SearchStats* stats) const {
+  std::uint32_t cur = entry;
+  float cur_d = distance(query, vector_at(cur));
+  if (stats) stats->distance_computations++;
+
+  bool improved = true;
+  while (improved) {
+    improved = false;
+    const auto& nbrs = links(cur, layer);
+    for (const std::uint32_t n : nbrs) {
+      const float d = distance(query, vector_at(n));
+      if (stats) stats->distance_computations++;
+      if (d < cur_d) {
+        cur_d = d;
+        cur = n;
+        improved = true;
+      }
+    }
+  }
+  return cur;
+}
+
+std::vector<Neighbor> HnswIndex::search_layer(const float* query, std::uint32_t entry, int layer,
+                                              std::size_t ef, SearchStats* stats) const {
+  std::vector<bool> visited(num_nodes_, false);
+  std::priority_queue<Neighbor, std::vector<Neighbor>, CloserFirst> candidates;
+  std::priority_queue<Neighbor, std::vector<Neighbor>, FartherFirst> results;
+
+  const float d0 = distance(query, vector_at(entry));
+  if (stats) stats->distance_computations++;
+  visited[entry] = true;
+  candidates.push({d0, entry});
+  results.push({d0, entry});
+
+  while (!candidates.empty()) {
+    const Neighbor cur = candidates.top();
+    if (cur.distance > results.top().distance) break;
+    candidates.pop();
+    if (stats) stats->nodes_visited++;
+
+    for (const std::uint32_t n : links(cur.id, layer)) {
+      if (visited[n]) continue;
+      visited[n] = true;
+      const float d = distance(query, vector_at(n));
+      if (stats) stats->distance_computations++;
+      if (results.size() < ef || d < results.top().distance) {
+        candidates.push({d, n});
+        results.push({d, n});
+        if (results.size() > ef) results.pop();
+      }
+    }
+  }
+
+  std::vector<Neighbor> out;
+  out.reserve(results.size());
+  while (!results.empty()) {
+    out.push_back(results.top());
+    results.pop();
+  }
+  return out;
+}
+
+void HnswIndex::select_neighbors(std::vector<Neighbor>& candidates, std::size_t m) const {
+  // Step 1: naive selection — keep the m closest. (Step 2 replaces this with the heuristic.)
+  std::sort(candidates.begin(), candidates.end(),
+            [](const Neighbor& a, const Neighbor& b) { return a.distance < b.distance; });
+  if (candidates.size() > m) candidates.resize(m);
+}
+
+std::uint32_t HnswIndex::add(const float* vec) {
+  const std::uint32_t id = static_cast<std::uint32_t>(num_nodes_);
+  const int node_layer = random_layer();
+
+  // Store the (normalized, for cosine) vector and allocate empty neighbor lists per layer.
+  vectors_.resize((num_nodes_ + 1) * dim_);
+  float* dst = &vectors_[id * dim_];
+  if (metric_ == Metric::Cosine) {
+    l2_normalize(vec, dst, dim_);
+  } else {
+    std::copy(vec, vec + dim_, dst);
+  }
+  links_.emplace_back(node_layer + 1);  // layers 0..node_layer, all empty
+
+  if (num_nodes_ == 0) {  // first node defines the top of the hierarchy
+    entry_point_ = id;
+    max_layer_ = node_layer;
+    num_nodes_ = 1;
+    return id;
+  }
+
+  std::uint32_t entry = entry_point_;
+  const int top = max_layer_;
+
+  // Phase 1: descend through layers above the new node's layer, just to refine the entry point.
+  for (int layer = top; layer > node_layer; --layer) {
+    entry = greedy_search_layer(dst, entry, layer, nullptr);
+  }
+
+  num_nodes_ = id + 1;  // new node now participates in the graph
+
+  // Phase 2: from min(node_layer, top) down to 0, wire the node into each layer.
+  for (int layer = std::min(node_layer, top); layer >= 0; --layer) {
+    const std::size_t m = max_M_for(layer);
+    std::vector<Neighbor> candidates = search_layer(dst, entry, layer, ef_construction_, nullptr);
+
+    // Pick this node's neighbors at this layer.
+    std::vector<Neighbor> selected = candidates;
+    select_neighbors(selected, m);
+    auto& my_links = links(id, layer);
+    my_links.clear();
+    for (const Neighbor& nb : selected) my_links.push_back(nb.id);
+
+    // Add the reverse edges, pruning any neighbor that now exceeds the layer's cap.
+    for (const Neighbor& nb : selected) {
+      auto& nbr_links = links(nb.id, layer);
+      nbr_links.push_back(id);
+      if (nbr_links.size() > m) {
+        const float* vnb = vector_at(nb.id);
+        std::vector<Neighbor> cand;
+        cand.reserve(nbr_links.size());
+        for (const std::uint32_t x : nbr_links) cand.push_back({distance(vnb, vector_at(x)), x});
+        select_neighbors(cand, m);
+        nbr_links.clear();
+        for (const Neighbor& c : cand) nbr_links.push_back(c.id);
+      }
+    }
+
+    // Carry the nearest candidate down as the entry point for the next layer.
+    if (!candidates.empty()) {
+      const auto nearest = std::min_element(
+          candidates.begin(), candidates.end(),
+          [](const Neighbor& a, const Neighbor& b) { return a.distance < b.distance; });
+      entry = nearest->id;
+    }
+  }
+
+  // If this node is taller than anything seen so far, it becomes the new global entry point.
+  if (node_layer > max_layer_) {
+    max_layer_ = node_layer;
+    entry_point_ = id;
+  }
+  return id;
+}
+
+std::vector<Neighbor> HnswIndex::search(const float* query, std::size_t k, std::size_t ef,
+                                        SearchStats* stats) const {
+  if (num_nodes_ == 0 || k == 0) return {};
+  ef = std::max(ef, k);
+
+  const float* q = query;
+  std::vector<float> qbuf;
+  if (metric_ == Metric::Cosine) {
+    qbuf.resize(dim_);
+    l2_normalize(query, qbuf.data(), dim_);
+    q = qbuf.data();
+  }
+
+  // Descend the sparse upper layers with cheap ef=1 greedy walks to find a great entry point.
+  std::uint32_t entry = entry_point_;
+  for (int layer = max_layer_; layer >= 1; --layer) {
+    entry = greedy_search_layer(q, entry, layer, stats);
+  }
+
+  // Wide beam search only at the bottom layer.
+  std::vector<Neighbor> res = search_layer(q, entry, 0, ef, stats);
+  std::sort(res.begin(), res.end(),
+            [](const Neighbor& a, const Neighbor& b) { return a.distance < b.distance; });
+  if (res.size() > k) res.resize(k);
+  return res;
+}
+
+}  // namespace queryforge

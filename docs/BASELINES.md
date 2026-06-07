@@ -56,11 +56,27 @@ diversity heuristic should let us reach the same recall with smaller M/ef (cheap
 
 ## A3 — HNSW (multi-layer)
 
-_To be measured in stage A3 — compare directly against the A2 rows above._
+Same dataset/params as the A2 table (N=10000, dim=128, L2, M=16, efc=200, 300 queries, k=10),
+so rows compare directly against NSW above. Built a 4-level hierarchy (top layer = 3).
 
-| N | Dim | M | efSearch | Recall@10 | avg nodes visited | query | build |
-|---|-----|---|----------|-----------|-------------------|-------|-------|
-| TBD | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+### Step 1 — layers + naive neighbor selection
+
+| efSearch | NSW Recall@10 | HNSW Recall@10 | HNSW nodes visited | HNSW query |
+|----------|---------------|----------------|--------------------|------------|
+| 50  | 50.4% | **71.4%** | 52 (0.52%)  | 122 µs |
+| 100 | 67.5% | **85.9%** | 101 (1.0%)  | 147 µs |
+| 200 | 80.8% | **94.5%** | 200 (2.0%)  | 252 µs |
+
+**What layers bought:** +14 to +21 recall points at the same nodes-visited budget. HNSW@M=16 reaches
+the recall that NSW needed M=32 for — layers give better entry points so the same beam finds more.
+
+### Step 2 — layers + diversity heuristic
+
+_To be measured next — expect equal/higher recall at smaller M/ef (cheaper queries)._
+
+| efSearch | Recall@10 (naive) | Recall@10 (heuristic) | query |
+|----------|-------------------|------------------------|-------|
+| TBD | | | |
 
 ## A4 — Persistence
 

@@ -20,6 +20,7 @@ add_executable(qf_tests
   smoke_test.cpp
   distance_test.cpp
   nsw_test.cpp
+  hnsw_test.cpp
 )
 target_link_libraries(qf_tests
   PRIVATE

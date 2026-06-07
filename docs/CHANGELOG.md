@@ -2,6 +2,18 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## A3 (step 1) — HNSW multi-layer structure
+- Added `HnswIndex` (`include/queryforge/hnsw.hpp`, `src/hnsw.cpp`): random exponential layer
+  assignment, top-down greedy descent on upper layers (ef=1), wide beam search at layer 0,
+  per-layer neighbor lists, layer-0 density = 2*M, reverse edges with pruning. Naive neighbor
+  selection for now (diversity heuristic is step 2).
+- Moved shared `Neighbor`/`SearchStats` into `include/queryforge/types.hpp`.
+- `qf_recall` now takes `algo=nsw|hnsw` and prints the top layer; templated over index type.
+- Tests: single-node, sorted output, multi-layer hierarchy, L2/cosine recall >90%, ef-monotonicity
+  (`tests/hnsw_test.cpp`). 17 tests pass.
+- Baselines: layers add +14–21 recall points vs NSW at equal nodes-visited; HNSW@M=16 matches
+  NSW@M=32 (see `BASELINES.md`).
+
 ## A2 — NSW single-layer graph
 - Added `NswIndex` (`include/queryforge/nsw.hpp`, `src/nsw.cpp`): greedy beam search
   (`search_layer`), insert with bidirectional links + degree pruning, flat contiguous adjacency,

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "queryforge/distance.hpp"
+#include "queryforge/types.hpp"
 
 // NswIndex — a single-layer Navigable Small World graph.
 //
@@ -17,18 +18,6 @@
 // insertion comes later.
 
 namespace queryforge {
-
-// Result of a search: one neighbor with its distance to the query (smaller = closer).
-struct Neighbor {
-  float distance;
-  std::uint32_t id;
-};
-
-// Optional diagnostics filled in by a search — lets us report "visited only X of N nodes".
-struct SearchStats {
-  std::size_t nodes_visited = 0;          // how many graph nodes we expanded
-  std::size_t distance_computations = 0;  // how many distance() calls we made
-};
 
 class NswIndex {
  public:

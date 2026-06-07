@@ -1,8 +1,9 @@
-// qf_recall — build an NSW index over synthetic vectors and report recall + latency vs the
-// exact brute-force answer. This is how we validate accuracy and fill in docs/BASELINES.md.
+// qf_recall — build an index over synthetic vectors and report recall + latency vs the exact
+// brute-force answer. This is how we validate accuracy and fill in docs/BASELINES.md.
 //
 // Usage (all optional, key=value):
-//   qf_recall N=5000 dim=128 M=16 efc=200 ef=50 k=10 queries=500 metric=l2 seed=42
+//   qf_recall algo=hnsw N=5000 dim=128 M=16 efc=200 ef=50 k=10 queries=500 metric=l2 seed=42
+//   algo = nsw | hnsw
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -11,11 +12,13 @@
 #include <string>
 
 #include "bruteforce.hpp"
+#include "queryforge/hnsw.hpp"
 #include "queryforge/nsw.hpp"
 
 namespace {
 
 struct Config {
+  std::string algo = "hnsw";
   std::size_t N = 5000;
   std::size_t dim = 128;
   std::size_t M = 16;
@@ -37,7 +40,8 @@ Config parse_args(int argc, char** argv) {
     if (eq == std::string::npos) continue;
     const std::string key = arg.substr(0, eq);
     const std::string val = arg.substr(eq + 1);
-    if (key == "N") c.N = parse_size(val);
+    if (key == "algo") c.algo = val;
+    else if (key == "N") c.N = parse_size(val);
     else if (key == "dim") c.dim = parse_size(val);
     else if (key == "M") c.M = parse_size(val);
     else if (key == "efc") c.efc = parse_size(val);
@@ -52,30 +56,19 @@ Config parse_args(int argc, char** argv) {
   return c;
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
+// Build the index from `data`, then run `queries`, measuring recall vs exact brute force.
+// Works for any index exposing add(const float*) and search(query, k, ef, SearchStats*).
+template <class Index>
+void run(const Config& c, Index& index, const std::vector<float>& data,
+         const std::vector<float>& qdata) {
   using clock = std::chrono::steady_clock;
-  const Config c = parse_args(argc, argv);
 
-  std::cout << "QueryForge recall harness\n"
-            << "  N=" << c.N << " dim=" << c.dim << " M=" << c.M << " efc=" << c.efc
-            << " ef=" << c.ef << " k=" << c.k << " queries=" << c.queries
-            << " metric=" << (c.metric == queryforge::Metric::Cosine ? "cosine" : "l2") << "\n";
-
-  const auto data = qf_tools::random_dataset(c.N, c.dim, c.seed);
-  const auto qdata = qf_tools::random_dataset(c.queries, c.dim, c.seed + 1);
-
-  // ---- Build ----
   auto t0 = clock::now();
-  queryforge::NswIndex index(c.dim, c.M, c.efc, c.metric);
   for (std::size_t i = 0; i < c.N; ++i) index.add(&data[i * c.dim]);
   auto t1 = clock::now();
   const double build_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
-  // ---- Search + measure recall against exact brute force ----
-  double recall_sum = 0.0;
-  double search_us_sum = 0.0;
+  double recall_sum = 0.0, search_us_sum = 0.0;
   std::size_t visited_sum = 0;
   for (std::size_t qi = 0; qi < c.queries; ++qi) {
     const float* q = &qdata[qi * c.dim];
@@ -106,5 +99,28 @@ int main(int argc, char** argv) {
             << "  avg query       : " << avg_us << " us\n"
             << "  avg nodes visited: " << avg_visited << " of " << c.N << " ("
             << (avg_visited / c.N * 100.0) << " %)\n";
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  const Config c = parse_args(argc, argv);
+
+  std::cout << "QueryForge recall harness\n"
+            << "  algo=" << c.algo << " N=" << c.N << " dim=" << c.dim << " M=" << c.M
+            << " efc=" << c.efc << " ef=" << c.ef << " k=" << c.k << " queries=" << c.queries
+            << " metric=" << (c.metric == queryforge::Metric::Cosine ? "cosine" : "l2") << "\n";
+
+  const auto data = qf_tools::random_dataset(c.N, c.dim, c.seed);
+  const auto qdata = qf_tools::random_dataset(c.queries, c.dim, c.seed + 1);
+
+  if (c.algo == "nsw") {
+    queryforge::NswIndex index(c.dim, c.M, c.efc, c.metric);
+    run(c, index, data, qdata);
+  } else {
+    queryforge::HnswIndex index(c.dim, c.M, c.efc, c.metric, c.seed);
+    run(c, index, data, qdata);
+    std::cout << "  top layer       : " << index.max_layer() << "\n";
+  }
   return 0;
 }
