@@ -113,10 +113,33 @@ std::vector<Neighbor> HnswIndex::search_layer(const float* query, std::uint32_t 
 }
 
 void HnswIndex::select_neighbors(std::vector<Neighbor>& candidates, std::size_t m) const {
-  // Step 1: naive selection — keep the m closest. (Step 2 replaces this with the heuristic.)
+  // Step 2: the diversity heuristic (HNSW paper, Algorithm 4).
+  //
+  // Consider candidates nearest-first. Accept a candidate c only if it is closer to the base
+  // node than it is to every neighbor we've already accepted. Intuition: if c is nearer to an
+  // existing pick than to us, then that pick already "covers" c's direction — adding c would be
+  // a redundant edge. Rejecting it keeps our M edges pointing in diverse directions, so the
+  // graph stays navigable from every side instead of clumping.
   std::sort(candidates.begin(), candidates.end(),
             [](const Neighbor& a, const Neighbor& b) { return a.distance < b.distance; });
-  if (candidates.size() > m) candidates.resize(m);
+  if (candidates.size() <= m) return;
+
+  std::vector<Neighbor> chosen;
+  chosen.reserve(m);
+  for (const Neighbor& c : candidates) {
+    if (chosen.size() >= m) break;
+    const float* vc = vector_at(c.id);
+    bool diverse = true;
+    for (const Neighbor& r : chosen) {
+      // distance(c, already-chosen r) vs distance(c, base node = c.distance)
+      if (distance(vc, vector_at(r.id)) < c.distance) {
+        diverse = false;
+        break;
+      }
+    }
+    if (diverse) chosen.push_back(c);
+  }
+  candidates.swap(chosen);
 }
 
 std::uint32_t HnswIndex::add(const float* vec) {

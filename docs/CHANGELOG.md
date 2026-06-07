@@ -2,6 +2,12 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## A3 (step 2) — HNSW diversity neighbor-selection heuristic
+- Replaced naive closest-M selection with the HNSW paper's Algorithm 4 diversity heuristic in
+  `HnswIndex::select_neighbors`.
+- Result: crossed the 95% Recall@10 target (95.9% @ ef=200, M=16) and ~35% faster low-ef queries;
+  see `BASELINES.md` step 2. All 17 tests still pass.
+
 ## A3 (step 1) — HNSW multi-layer structure
 - Added `HnswIndex` (`include/queryforge/hnsw.hpp`, `src/hnsw.cpp`): random exponential layer
   assignment, top-down greedy descent on upper layers (ef=1), wide beam search at layer 0,

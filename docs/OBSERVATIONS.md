@@ -5,6 +5,31 @@ behind decisions. Newest entries on top.
 
 ---
 
+## A3 — full HNSW (two steps)
+
+- **Built HNSW in two measured steps** (per the chosen learning approach):
+  - *Step 1 (layers, naive selection):* added the multi-layer hierarchy on top of the A2 beam
+    search — random exponential layer assignment, ef=1 greedy descent on upper layers, wide beam
+    only at layer 0, per-layer adjacency, layer-0 density 2*M. Result: +14–21 recall points over
+    NSW at the same nodes-visited budget; HNSW@M=16 matched NSW@M=32.
+  - *Step 2 (diversity heuristic, Algorithm 4):* replaced naive closest-M with "accept a candidate
+    only if it's closer to the base than to any already-accepted neighbor." Result: crossed the
+    **95% recall target** (95.9% @ ef=200, M=16) and made low-ef queries ~35% faster (122→80 µs).
+- **Key insight — the heuristic is not a pure win at every ef.** It makes the graph *leaner*
+  (fewer, more diverse edges), which: (a) speeds up search (fewer neighbors to expand per hop),
+  (b) raises peak recall (no blind spots), but (c) costs a hair of recall at very low ef where the
+  extra redundant edges of the naive graph happened to help. The operating points you'd ship at
+  (higher recall) favor the heuristic on both axes. Good lesson: "better algorithm" is often a
+  trade-curve shift, not a uniform improvement — you have to look at the whole recall/latency curve.
+- **Why ef=1 on upper layers:** the upper layers exist only to ferry the search to a good entry
+  point near the query; we don't need the best-k there, just "get closer," so a single greedy walk
+  (ef=1) is enough and cheap. The expensive wide beam runs once, at layer 0.
+- **Perf TODOs logged (not done):** layer-0 adjacency is still nested `std::vector` (A2 used a flat
+  array); flattening the hot layer and reusing a visited-version array are the obvious next
+  optimizations once we care about absolute speed.
+
+---
+
 ## A2 — NSW single-layer graph
 
 - **Built:** a single-layer Navigable Small World graph (`NswIndex`) with greedy beam search

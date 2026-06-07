@@ -70,13 +70,22 @@ so rows compare directly against NSW above. Built a 4-level hierarchy (top layer
 **What layers bought:** +14 to +21 recall points at the same nodes-visited budget. HNSW@M=16 reaches
 the recall that NSW needed M=32 for — layers give better entry points so the same beam finds more.
 
-### Step 2 — layers + diversity heuristic
+### Step 2 — layers + diversity heuristic (Algorithm 4)
 
-_To be measured next — expect equal/higher recall at smaller M/ef (cheaper queries)._
+| efSearch | Recall@10 (naive) | Recall@10 (heuristic) | query (naive) | query (heuristic) |
+|----------|-------------------|------------------------|---------------|--------------------|
+| 50  | 71.4% | 70.5% | 122 µs | **80 µs** |
+| 100 | 85.9% | 87.0% | 147 µs | 155 µs |
+| 200 | 94.5% | **95.9%** | 252 µs | 245 µs |
 
-| efSearch | Recall@10 (naive) | Recall@10 (heuristic) | query |
-|----------|-------------------|------------------------|-------|
-| TBD | | | |
+**What the heuristic bought:** crossed the **95% recall target** with only M=16, and made low-ef queries
+~35% faster. The heuristic rejects redundant same-direction edges, so nodes keep fewer but
+better-aimed neighbors — fewer distance computations per hop. Net: a leaner, faster graph that
+reaches higher peak recall. (At very low ef it trades a hair of recall for the leaner graph.)
+
+**A3 bottom line vs A2:** NSW@ef=200 = 80.8% recall → full HNSW@ef=200 = 95.9% at the same M=16,
+visiting ~2% of nodes. Target (>95% Recall@10) met on synthetic data; to be re-validated on real
+CLIP embeddings and at larger N on `local`.
 
 ## A4 — Persistence
 
