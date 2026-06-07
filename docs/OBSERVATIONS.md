@@ -5,6 +5,31 @@ behind decisions. Newest entries on top.
 
 ---
 
+## A4 — persistence (save + mmap load)
+
+- **Built:** a binary `.qfx` format (`HnswIndex::save` / `::load` in `src/persistence.cpp`), with a
+  header, a contiguous vectors block, and CSR-style per-layer adjacency. `load()` memory-maps the
+  file on POSIX (`mmap`) and reads structured data straight from the mapped bytes; non-POSIX falls
+  back to a buffered read. RAII wrappers (`FileBytes`) free the mapping/heap automatically.
+- **Result:** loading is ~1000–1570× faster than rebuilding (e.g. 100k: build 84 s → load 54 ms),
+  files are ~640 bytes/vector, and round-trips are bit-exact (loaded index searches identically —
+  verified by `Persistence.RoundTripSearchIsIdentical`).
+- **Teaching point — what mmap buys:** we don't "read and parse" the file; the OS maps its bytes
+  into our address space and pages them in on demand. For the vectors block (the bulk) this is
+  essentially free to "load". The win is build-once / serve-many: a service restarts in
+  milliseconds instead of re-running a multi-second/minute build.
+- **Surprise caught:** the persist tool first reported "sanity FAIL" — but that was a bad check
+  (it assumed approximate search at ef=32 returns the *exact* nearest on 100k, which it needn't).
+  The real integrity check is loaded.search == original.search, which passes. Lesson: assert the
+  invariant you actually guarantee (determinism), not one you don't (exact recall).
+- **Bottleneck identified (logged, not fixed):** build time is superlinear because each insert
+  allocates+zeroes a size-N `vector<bool> visited` in `search_layer` → ~O(N²) build. Top priority
+  for the perf pass (reusable visited-version array) before we scale to 500k. Load is unaffected.
+- **Scope note:** A4 covers the engine's index persistence. The product *metadata* store (SQLite vs
+  Postgres, still an open decision) is deferred to A6 where real product metadata first appears.
+
+---
+
 ## A3 — full HNSW (two steps)
 
 - **Built HNSW in two measured steps** (per the chosen learning approach):

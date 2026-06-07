@@ -89,8 +89,17 @@ CLIP embeddings and at larger N on `local`.
 
 ## A4 — Persistence
 
-_To be measured in stage A4._
+Measured on `lightning` via `qf_persist` (HNSW, dim=128, M=16, efc=200, L2). The headline is the
+build-once / load-many win: loading is ~1000× faster than rebuilding.
 
-| N vectors | Dim | Index size on disk | mmap load time | Machine |
-|-----------|-----|--------------------|----------------|---------|
-| TBD | TBD | TBD | TBD | lightning |
+| N | file size | bytes/vector | build time | save | **mmap load** | load speedup |
+|---|-----------|--------------|------------|------|---------------|--------------|
+| 30000  | 18.3 MiB | 640 | 18.3 s | 56 ms | **16 ms** | **1134×** |
+| 100000 | 61.1 MiB | 640 | 84.3 s | 89 ms | **54 ms** | **1570×** |
+
+- 640 bytes/vector = 512 (128 floats) + ~128 for the per-layer adjacency. Round-trips are bit-exact:
+  the loaded index returns identical search results (verified in tests and the tool).
+- **Build time is superlinear** (30k→18s, 100k→84s) — the known bottleneck is that each insert
+  allocates+zeroes a `vector<bool> visited` of size N inside `search_layer`, making build ~O(N²).
+  Fixing this (a reusable visited-version array) is the top item for the perf pass before scaling
+  to 500k. Load time is unaffected and already excellent.

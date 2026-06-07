@@ -2,6 +2,16 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## A4 — Persistence (binary serialize + mmap load)
+- `HnswIndex::save(path)` / `HnswIndex::load(path)` with a binary `.qfx` format (header + vectors
+  block + CSR per-layer adjacency); `src/persistence.cpp`. POSIX `mmap` load with a buffered-read
+  fallback, RAII-managed.
+- Tests: L2 + cosine round-trip search identical, bad-file throws (`tests/persistence_test.cpp`),
+  20 tests pass.
+- Tool `qf_persist` reports build vs load time + file size; baselines in `BASELINES.md`
+  (load ~1000-1570× faster than rebuild, ~640 bytes/vector).
+- Logged the O(N^2) build bottleneck (per-insert size-N visited allocation) for the perf pass.
+
 ## A3 (step 2) — HNSW diversity neighbor-selection heuristic
 - Replaced naive closest-M selection with the HNSW paper's Algorithm 4 diversity heuristic in
   `HnswIndex::select_neighbors`.

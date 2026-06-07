@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "queryforge/distance.hpp"
@@ -42,6 +43,13 @@ class HnswIndex {
   std::size_t dim() const noexcept { return dim_; }
   Metric metric() const noexcept { return metric_; }
   int max_layer() const noexcept { return max_layer_; }
+
+  // --- Persistence (stage A4) ---
+  // Write the full index to `path` in QueryForge's binary format (.qfx).
+  void save(const std::string& path) const;
+  // Load an index previously written by save(). On POSIX the file is memory-mapped for a fast,
+  // near-instant load instead of rebuilding the graph.
+  static HnswIndex load(const std::string& path);
 
  private:
   const float* vector_at(std::uint32_t id) const noexcept { return &vectors_[id * dim_]; }

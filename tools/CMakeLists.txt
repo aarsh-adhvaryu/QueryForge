@@ -8,3 +8,13 @@ target_link_libraries(qf_recall
 target_include_directories(qf_recall
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}  # for bruteforce.hpp
 )
+
+add_executable(qf_persist
+  persist.cpp
+)
+target_link_libraries(qf_persist
+  PRIVATE QueryForge::queryforge
+)
+target_include_directories(qf_persist
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}  # for bruteforce.hpp
+)
