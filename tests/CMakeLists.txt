@@ -15,9 +15,10 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-# One test executable for now; link it to the engine + GoogleTest's main().
+# One test executable; link it to the engine + GoogleTest's main().
 add_executable(qf_tests
   smoke_test.cpp
+  distance_test.cpp
 )
 target_link_libraries(qf_tests
   PRIVATE

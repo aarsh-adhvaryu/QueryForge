@@ -12,10 +12,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(benchmark)
 
+# Each benchmark file has its own main(), so it gets its own executable.
 add_executable(qf_bench
   smoke_bench.cpp
 )
 target_link_libraries(qf_bench
+  PRIVATE
+    QueryForge::queryforge
+    benchmark::benchmark
+)
+
+add_executable(qf_distance_bench
+  distance_bench.cpp
+)
+target_link_libraries(qf_distance_bench
   PRIVATE
     QueryForge::queryforge
     benchmark::benchmark

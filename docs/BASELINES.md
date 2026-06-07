@@ -12,15 +12,29 @@ on, because numbers only mean something relative to hardware.
 
 ## A1 — Distance throughput (scalar vs SSE vs AVX2)
 
-_To be measured in stage A1._
+Measured on `lightning` (g++ 13.3, -O3 Release, AVX2/FMA), `qf_distance_bench --benchmark_min_time=0.3s`.
+Time is per full vector-vs-vector comparison (lower is better).
 
-| Metric | Dim | Variant | ns/op | speedup vs scalar | Machine |
-|--------|-----|---------|-------|-------------------|---------|
-| L2     | 512 | scalar  | TBD   | 1.0x              | lightning |
-| L2     | 512 | SSE     | TBD   | TBD               | lightning |
-| L2     | 512 | AVX2    | TBD   | TBD               | lightning |
-| cosine | 512 | scalar  | TBD   | 1.0x              | lightning |
-| cosine | 512 | AVX2    | TBD   | TBD               | lightning |
+| Kernel | Dim | Variant | ns/op | speedup vs scalar |
+|--------|-----|---------|-------|-------------------|
+| L2     | 512 | scalar  | 453   | 1.0x  |
+| L2     | 512 | SSE     | 113   | 4.0x  |
+| L2     | 512 | AVX2    | 56.8  | 8.0x  |
+| L2     | 768 | scalar  | 687   | 1.0x  |
+| L2     | 768 | SSE     | 171   | 4.0x  |
+| L2     | 768 | AVX2    | 87.2  | 7.9x  |
+| dot    | 512 | scalar  | 460   | 1.0x  |
+| dot    | 512 | SSE     | 122   | 3.8x  |
+| dot    | 512 | AVX2    | 52.1  | 8.8x  |
+| dot    | 768 | scalar  | 684   | 1.0x  |
+| dot    | 768 | SSE     | 172   | 4.0x  |
+| dot    | 768 | AVX2    | 83.7  | 8.2x  |
+
+**Takeaway:** AVX2 gives ~8x (≈88% fewer cycles), beating the proposal's ~60% target. The scalar
+baseline was *not* auto-vectorized (GCC won't reorder a float reduction without -ffast-math), so this
+is a genuine scalar-vs-SIMD comparison, not SIMD-vs-SIMD.
+
+_Re-measure on `local` (Core Ultra 9) when available — expect AVX2 only, no AVX-512._
 
 ## A2 / A3 — Recall & search
 

@@ -4,6 +4,7 @@
 # the sources list below (distance.cpp, nsw.cpp, hnsw.cpp, persistence.cpp, ...).
 add_library(queryforge
   version.cpp
+  distance.cpp
 )
 
 # PUBLIC include dir: anything linking to `queryforge` (tests, benchmarks, the
