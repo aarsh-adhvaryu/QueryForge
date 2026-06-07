@@ -5,6 +5,25 @@ behind decisions. Newest entries on top.
 
 ---
 
+## A5 — Pybind11 bindings
+
+- **Built:** `queryforge.HnswIndex` Python module (`python/bindings.cpp`). NumPy float32 arrays
+  cross the boundary; `search()` returns `(ids, distances)` NumPy arrays — drops straight into ML
+  code. `add_batch` takes an (n, dim) array.
+- **Two build gotchas, both fixed:**
+  1. *PIC:* the static `libqueryforge.a` was compiled without `-fPIC`, so it couldn't link into a
+     shared `.so`. Fix: `POSITION_INDEPENDENT_CODE ON` on the engine target. (Lesson: anything that
+     might end up inside a shared object needs position-independent code.)
+  2. *CTest interpreter:* `${Python_EXECUTABLE}` was empty under this pybind11 version → used
+     `find_program(QF_PYTHON ...)` instead, and `enable_testing()` had to move to the top level so
+     the python/ subdir could register a test.
+- **Design:** `QF_BUILD_PYTHON` defaults OFF so the plain C++ build stays lightweight; turn it on to
+  build the module. The demo (`example.py`) doubles as the `python_bindings` CTest case.
+- **Why this matters:** A6's CLIP pipeline is Python; these bindings are the bridge that lets the
+  heavy search stay in optimized C++ while the embedding/orchestration lives in Python.
+
+---
+
 ## A4 — persistence (save + mmap load)
 
 - **Built:** a binary `.qfx` format (`HnswIndex::save` / `::load` in `src/persistence.cpp`), with a

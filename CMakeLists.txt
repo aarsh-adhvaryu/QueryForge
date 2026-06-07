@@ -33,6 +33,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 option(QF_BUILD_TESTS      "Build unit tests (GoogleTest)"       ON)
 option(QF_BUILD_BENCHMARKS "Build benchmarks (Google Benchmark)" ON)
 option(QF_BUILD_TOOLS      "Build developer tools (recall harness, etc.)" ON)
+option(QF_BUILD_PYTHON     "Build the Pybind11 Python module"    OFF)
+
+enable_testing()  # enabled up front so any subdirectory can register CTest cases
 
 # ---- The engine library ------------------------------------------------------
 add_subdirectory(src)
@@ -40,6 +43,11 @@ add_subdirectory(src)
 # ---- Tools -------------------------------------------------------------------
 if(QF_BUILD_TOOLS)
   add_subdirectory(tools)
+endif()
+
+# ---- Python bindings ---------------------------------------------------------
+if(QF_BUILD_PYTHON)
+  add_subdirectory(python)
 endif()
 
 # ---- Tests -------------------------------------------------------------------

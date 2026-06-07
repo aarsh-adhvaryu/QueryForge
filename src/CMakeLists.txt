@@ -18,6 +18,9 @@ target_include_directories(queryforge
 
 target_compile_features(queryforge PUBLIC cxx_std_17)
 
+# Position-independent code so the static lib can be linked into the shared Python module.
+set_target_properties(queryforge PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # A namespaced alias so other targets link as QueryForge::queryforge — this is the
 # conventional, self-documenting way to refer to the library.
 add_library(QueryForge::queryforge ALIAS queryforge)

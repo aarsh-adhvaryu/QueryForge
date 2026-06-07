@@ -2,6 +2,13 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## A5 — Pybind11 bindings
+- `python/bindings.cpp` exposes `queryforge.HnswIndex` (ctor, add, add_batch, search, save, load,
+  size/dim/metric/max_layer) with NumPy float32 in and `(ids, distances)` NumPy arrays out.
+- New `QF_BUILD_PYTHON` CMake option (OFF by default); pybind11 fetched via FetchContent; engine
+  library built with `POSITION_INDEPENDENT_CODE` so it links into the shared module.
+- `python/example.py` demo doubles as the `python_bindings` CTest case (21 tests with Python on).
+
 ## A4 — Persistence (binary serialize + mmap load)
 - `HnswIndex::save(path)` / `HnswIndex::load(path)` with a binary `.qfx` format (header + vectors
   block + CSR per-layer adjacency); `src/persistence.cpp`. POSIX `mmap` load with a buffered-read
