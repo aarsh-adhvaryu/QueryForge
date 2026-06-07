@@ -5,6 +5,32 @@ behind decisions. Newest entries on top.
 
 ---
 
+## A2 — NSW single-layer graph
+
+- **Built:** a single-layer Navigable Small World graph (`NswIndex`) with greedy beam search
+  (`search_layer`), insert, and a flat contiguous adjacency array (`links_`, capacity `M` per
+  node) for cache locality. Plus a recall harness (`qf_recall`) that compares against exact
+  brute force, and 5 unit tests (incl. recall thresholds).
+- **Design choices:**
+  - *Contiguous storage:* vectors and adjacency are flat arrays indexed by node id — no pointer
+    chasing, cache-friendly. This is the realistic "custom memory layout" from the plan.
+  - *Cosine = normalized dot:* for cosine we normalize vectors at insert and the query at search,
+    then distance is `1 - dot`. Cheaper than recomputing norms every comparison.
+  - *Naive neighbor selection (closest-M)* on purpose — A3 swaps in the diversity heuristic and
+    we measure the difference.
+- **Results (N=10k, dim=128, L2 — see BASELINES):** the graph visits only ~2% of nodes (core
+  promise works). Recall climbs with `efSearch` (20%→50%→81% for ef=10/50/200) and jumps to
+  **94.5%** when `M` goes 16→32. So `M` is the stronger recall lever; `efSearch` is the per-query
+  speed/recall dial.
+- **Why recall isn't ~100% yet:** single layer + naive selection. The two A3 upgrades address
+  exactly this: (a) hierarchical layers give better entry points so search starts near the answer;
+  (b) the diversity heuristic avoids redundant edges so the same M buys more reach.
+- **Note for later (perf):** `search_layer` allocates a `std::vector<bool> visited` per call —
+  fine for correctness, but a reusable "visited version" array will cut allocation overhead when
+  we optimize. Logged, not done.
+
+---
+
 ## A1 — SIMD distance math
 
 - **Result:** AVX2 distance kernels run ~8x faster than scalar (L2 @512-d: 453ns → 56.8ns;

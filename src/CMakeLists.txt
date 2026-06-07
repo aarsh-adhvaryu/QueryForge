@@ -5,6 +5,7 @@
 add_library(queryforge
   version.cpp
   distance.cpp
+  nsw.cpp
 )
 
 # PUBLIC include dir: anything linking to `queryforge` (tests, benchmarks, the

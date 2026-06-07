@@ -32,9 +32,15 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # ---- Options -----------------------------------------------------------------
 option(QF_BUILD_TESTS      "Build unit tests (GoogleTest)"       ON)
 option(QF_BUILD_BENCHMARKS "Build benchmarks (Google Benchmark)" ON)
+option(QF_BUILD_TOOLS      "Build developer tools (recall harness, etc.)" ON)
 
 # ---- The engine library ------------------------------------------------------
 add_subdirectory(src)
+
+# ---- Tools -------------------------------------------------------------------
+if(QF_BUILD_TOOLS)
+  add_subdirectory(tools)
+endif()
 
 # ---- Tests -------------------------------------------------------------------
 if(QF_BUILD_TESTS)

@@ -19,11 +19,16 @@ FetchContent_MakeAvailable(googletest)
 add_executable(qf_tests
   smoke_test.cpp
   distance_test.cpp
+  nsw_test.cpp
 )
 target_link_libraries(qf_tests
   PRIVATE
     QueryForge::queryforge
     GTest::gtest_main
+)
+# nsw_test.cpp reuses the brute-force ground-truth helpers under tools/.
+target_include_directories(qf_tests
+  PRIVATE ${CMAKE_SOURCE_DIR}/tools
 )
 
 # gtest_discover_tests registers each TEST() with CTest, so `ctest` lists/runs them.

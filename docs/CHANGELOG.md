@@ -2,6 +2,16 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## A2 — NSW single-layer graph
+- Added `NswIndex` (`include/queryforge/nsw.hpp`, `src/nsw.cpp`): greedy beam search
+  (`search_layer`), insert with bidirectional links + degree pruning, flat contiguous adjacency,
+  L2 + cosine support, and `SearchStats` (nodes visited / distance computations).
+- Added the recall harness `qf_recall` (`tools/recall.cpp`) and shared brute-force ground-truth
+  helpers (`tools/bruteforce.hpp`); new `QF_BUILD_TOOLS` CMake option.
+- Tests: single-node, sorted-output, L2/cosine recall thresholds, and "higher ef ⇒ higher recall"
+  (`tests/nsw_test.cpp`). 11 tests pass.
+- Baselines recorded in `BASELINES.md` (recall vs ef and M; ~2% of nodes visited).
+
 ## A1 — SIMD distance math
 - Added `queryforge::l2_sqr`, `dot`, and `cosine_distance` with scalar, SSE, and AVX2+FMA
   implementations (`include/queryforge/distance.hpp`, `src/distance.cpp`).

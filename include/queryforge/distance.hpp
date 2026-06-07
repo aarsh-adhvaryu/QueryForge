@@ -16,6 +16,12 @@
 
 namespace queryforge {
 
+// The similarity metric an index uses to decide "how close" two vectors are.
+//   L2     — squared Euclidean distance (smaller = closer).
+//   Cosine — cosine distance in [0,2] (smaller = closer). Indexes normalize vectors so this
+//            becomes 1 - dot(a,b), i.e. cosine == inner product on unit-length vectors.
+enum class Metric { L2, Cosine };
+
 // Which SIMD implementation the dispatcher selected on this machine.
 enum class SimdBackend { Scalar, SSE, AVX2 };
 
