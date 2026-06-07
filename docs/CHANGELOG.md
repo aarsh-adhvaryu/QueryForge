@@ -2,6 +2,16 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## A6 — Embedding pipeline scaffold + CPU dry-run
+- `python/qf_pipeline/` package: pluggable `Embedder` (dependency-free `HistogramEmbedder` for the
+  CPU dry-run; real `ClipEmbedder` with lazy torch/open_clip for the GPU/laptop), SQLite-backed
+  `MetadataStore`, and `build_catalog()` / `search_similar()` tying engine + metadata together.
+- Resolved the metadata-store decision for local dev: SQLite (stdlib, zero dependency); Postgres is
+  a later swap behind the same interface.
+- `qf_pipeline.dry_run`: generates synthetic colored product images, builds the index + catalog,
+  and runs a visual-similarity query (8/8 same-category). Wired as the `python_pipeline` CTest case
+  (22 tests with Python on). Added `python/requirements.txt`.
+
 ## A5 — Pybind11 bindings
 - `python/bindings.cpp` exposes `queryforge.HnswIndex` (ctor, add, add_batch, search, save, load,
   size/dim/metric/max_layer) with NumPy float32 in and `(ids, distances)` NumPy arrays out.

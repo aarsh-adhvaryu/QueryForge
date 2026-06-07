@@ -21,4 +21,10 @@ if(QF_BUILD_TESTS)
            COMMAND ${QF_PYTHON} ${CMAKE_CURRENT_SOURCE_DIR}/example.py)
   set_tests_properties(python_bindings PROPERTIES
     ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:queryforge_py>")
+
+  # End-to-end demo pipeline dry-run (images -> embeddings -> index -> metadata -> search).
+  add_test(NAME python_pipeline
+           COMMAND ${QF_PYTHON} -m qf_pipeline.dry_run)
+  set_tests_properties(python_pipeline PROPERTIES
+    ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:queryforge_py>:${CMAKE_CURRENT_SOURCE_DIR}")
 endif()

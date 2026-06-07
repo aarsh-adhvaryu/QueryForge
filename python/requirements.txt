@@ -1,0 +1,13 @@
+# QueryForge Python pipeline dependencies.
+
+# --- Core (CPU dry-run works with just these) ---
+numpy>=1.24
+pillow>=9.0
+
+# --- Real CLIP embeddings (uncomment on the GPU machine / laptop) ---
+# torch
+# open_clip_torch
+
+# The `queryforge` extension module itself is built from C++ via CMake:
+#   cmake -S . -B build -DQF_BUILD_PYTHON=ON && cmake --build build -j
+# then add build/python to PYTHONPATH.

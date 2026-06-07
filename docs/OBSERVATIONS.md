@@ -5,6 +5,27 @@ behind decisions. Newest entries on top.
 
 ---
 
+## A6 — embedding pipeline scaffold + CPU dry-run
+
+- **Built:** `python/qf_pipeline/` — a pluggable `Embedder` abstraction, a SQLite metadata store,
+  and `build_catalog`/`search_similar`. The `dry_run` generates synthetic colored product images,
+  embeds them, builds a QueryForge index + SQLite catalog, and queries — returns 8/8 same-category
+  matches. Runs on CPU in seconds with no model download.
+- **Key scoping decision:** real CLIP needs `open_clip_torch`/`transformers` (not installed) and is
+  slow without a GPU (which is off). Rather than block on a big download, the pipeline is built
+  around an `Embedder` interface with two implementations:
+  - `HistogramEmbedder` (grid of average colors, dim=48) — no heavy deps, real enough that similar
+    images cluster, so the *whole* pipeline is exercised now.
+  - `ClipEmbedder` (ViT-B-32, 512-d) — written and documented, lazy-imports torch/open_clip; this
+    is the production path for the 500K catalog on the laptop/GPU. Swapping it in changes one line.
+- **Metadata store decision resolved (for local):** SQLite via the stdlib `sqlite3` — zero
+  dependency, ACID, keyed by the index id. Postgres remains a later swap behind `MetadataStore`.
+- **Why this is the right "dry-run ready" state:** every architectural seam (image→vector,
+  vector→index, id→metadata, query→results) is implemented and tested end-to-end; only the *real
+  model* and *real dataset* are deferred to bucket B, and they drop into existing slots.
+
+---
+
 ## A5 — Pybind11 bindings
 
 - **Built:** `queryforge.HnswIndex` Python module (`python/bindings.cpp`). NumPy float32 arrays
