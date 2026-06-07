@@ -38,6 +38,30 @@ queued perf pass: fix the O(N²) build (reusable visited array) and add parallel
 
 Build everything (incl. Python module + web tests): `cmake -S . -B build -DQF_BUILD_PYTHON=ON`.
 
+## Performance & time complexity — investigate next
+
+The engine is correct and hits its recall target, but it has **not** had a performance pass. Before
+scaling to the 500K dataset, look into these (highest priority first):
+
+- **Build is ~O(N²) — the main thing to fix.** Each `add()` calls `search_layer`, which allocates
+  and zeroes a fresh `std::vector<bool> visited(num_nodes_)` every insert → O(N) per insert → O(N²)
+  total. Measured: 30k builds in 18 s, 100k in 84 s (superlinear). **Fix:** a reusable
+  *visited-version array* — keep one `std::vector<uint32_t> visited(N)` for the whole build plus a
+  `current_visit` counter; bump the counter (O(1)) to "clear", and treat `visited[x] ==
+  current_visit` as the seen-flag. This is what hnswlib does; it brings build down to ≈ O(N·log N).
+  Caveat: it makes a search *stateful*, so under parallel build / concurrent writes each thread
+  needs its own visited array.
+- **Reuse the search heaps** (candidate/result priority queues in `search_layer`) instead of
+  reallocating them per query.
+- **Flatten layer-0 adjacency** (currently nested `std::vector`) into a contiguous array — layer 0
+  is the hot path, so this helps cache locality.
+- Then: **parallel multi-threaded build** (queued enhancement; record before/after build time).
+
+Reference complexities (HNSW as designed): search ≈ O(log N) nodes visited; build ≈ O(N·log N)
+once the visited-array fix lands; memory ≈ N·dim·4 B (vectors) + ~N·M·4·1.5 B (edges). Always
+re-confirm changes with `qf_recall` (recall must not regress) and `qf_persist` (build time). Load
+time is already excellent and unaffected by the build issue.
+
 ## Build / test / run
 
 ```bash
@@ -46,6 +70,15 @@ cmake --build build -j         # compile
 ctest --test-dir build --output-on-failure   # run all unit tests
 ./build/bin/qf_distance_bench  # SIMD distance benchmarks
 ./build/bin/qf_recall algo=hnsw N=10000 dim=128 M=16 efc=200 ef=200 k=10 metric=l2   # recall harness
+./build/bin/qf_persist N=30000 dim=128 M=16 efc=200                                  # build vs load time
+```
+
+Run the demo (Python module + web app):
+
+```bash
+cmake -S . -B build -DQF_BUILD_PYTHON=ON && cmake --build build -j   # build the queryforge module
+PYTHONPATH=build/python:python python -m qf_pipeline.dry_run         # CPU end-to-end dry-run
+PYTHONPATH=build/python:python uvicorn backend.app:app               # web app at http://127.0.0.1:8000/
 ```
 
 Notes:
@@ -59,10 +92,12 @@ Notes:
 - `src/` — implementations. Add new `.cpp` files to `src/CMakeLists.txt`.
 - `tests/` — GoogleTest (`*_test.cpp`); add to `tests/CMakeLists.txt`.
 - `bench/` — Google Benchmark; each file has its own `main()` → its own executable.
-- `tools/` — `qf_recall` and shared brute-force ground-truth helpers (`bruteforce.hpp`).
+- `tools/` — `qf_recall` (recall vs brute force), `qf_persist` (build vs mmap-load timing), and
+  shared ground-truth helpers (`bruteforce.hpp`).
 - `docs/` — `architecture.md` (how/why), `OBSERVATIONS.md` (journal), `CHANGELOG.md`, `BASELINES.md`
   (recorded numbers). **Keep these updated as part of each change.**
-- `python/`, `backend/`, `frontend/` — scaffolds for later stages (currently READMEs only).
+- `python/` — `queryforge` Pybind11 module (`bindings.cpp`) + `qf_pipeline` (embedder, SQLite
+  metadata, dry-run). `backend/` — FastAPI service (`app.py`). `frontend/` — React UI (`index.html`).
 
 ## Conventions
 
