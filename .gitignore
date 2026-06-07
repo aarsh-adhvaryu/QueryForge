@@ -1,0 +1,45 @@
+# Build output
+/build/
+/build-*/
+cmake-build-*/
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.exe
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+_deps/
+Testing/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.ipynb_checkpoints/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Data & models (kept out of git on purpose — see docs/architecture.md)
+/data/
+*.bin
+*.index
+*.npy
+*.pt
+*.onnx
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
