@@ -38,6 +38,15 @@ queued perf pass: fix the O(N²) build (reusable visited array) and add parallel
 
 Build everything (incl. Python module + web tests): `cmake -S . -B build -DQF_BUILD_PYTHON=ON`.
 
+**Currently in progress — real data (P3/P4):** decided ViT-L/14 → 768-d, "start small then scale".
+`open_clip_torch` + `datasets` are installed; dataset = `ashraq/fashion-product-images-small` (real
+fashion products w/ articleType/baseColour/productDisplayName). Real-data build script:
+`python/qf_pipeline/build_real.py`. NOTE the ViT-L/14 pretrained tag is `laion2b_s32b_b82k` (the
+ClipEmbedder default tag is for B/32). **To resume:** toggle the Studio GPU ON, then
+`PYTHONPATH=build/python:python python -m qf_pipeline.build_real --limit 300 --out /tmp/qf_real`
+(small validation first; raise `--limit` to scale). CPU works but ViT-L/14 is slow — the last run
+was interrupted mid-embedding, so build_real is not yet run-verified.
+
 ## Performance & time complexity — investigate next
 
 The engine is correct and hits its recall target, but it has **not** had a performance pass. Before
