@@ -55,9 +55,9 @@ Real build-speed levers, in order:
   `thread_local`, so each thread already gets its own scratch — the groundwork is in place.
 - **efConstruction tuning** — linear lever (efc 200→100 ≈ halves build time; measured ~no recall
   loss). Pick the lowest efc that holds recall.
-- **Flatten layer-0 adjacency** (currently nested `std::vector`) into a contiguous array → cache
-  locality on the hot path.
-- **Reuse the search heaps** (candidate/result priority queues in `search_layer`) per query.
+- **Flatten layer-0 adjacency** → DONE (`links0_` flat array + per-node upper blocks + prefetch);
+  ~12–15% faster build, but the memory wall (random vector reads > L3) still dominates the slope.
+- **Reuse the search heaps** (candidate/result priority queues in `search_layer`) per query — TODO.
 
 Reference complexities (HNSW as designed): search ≈ O(log N) nodes visited; build ≈ O(N·log N)
 algorithmically (wall-clock ~N^1.4 here due to cache effects); memory ≈ N·dim·4 B (vectors) +
@@ -108,8 +108,9 @@ Notes:
   vectors normalized at insert time.
 - SIMD: per-function `__attribute__((target("avx2,fma")))` + runtime dispatch via
   `__builtin_cpu_supports`. **No `-march=native`** (keeps one binary portable).
-- Vectors stored contiguously by node id. NSW adjacency is a flat array; HNSW adjacency is still
-  nested `std::vector` (a logged perf TODO to flatten layer 0).
+- Vectors stored contiguously by node id. Adjacency is flat/contiguous in both engines: NSW uses a
+  flat array; HNSW uses fixed-stride blocks (`links0_` flat array for layer 0 + per-node upper
+  blocks), each block `[count, ids...]` — see `link_block()` in `hnsw.hpp`.
 - Validate any index change with the recall harness / recall tests vs brute force.
 
 ## Target hardware (local-first)

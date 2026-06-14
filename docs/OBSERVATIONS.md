@@ -5,6 +5,25 @@ behind decisions. Newest entries on top.
 
 ---
 
+## P1.5 — Flatten HNSW adjacency + prefetch (cache locality)
+
+- **Done:** replaced the nested `std::vector<std::vector<std::vector<uint32_t>>>` adjacency with
+  fixed-stride **contiguous blocks** — layer 0 (all nodes, hot path) in one flat array `links0_`
+  (stride `M0+1`, block = `[count, ids...]`), upper layers in a small contiguous per-node block.
+  Added `__builtin_prefetch` of the next neighbor's vector in `search_layer`. This realizes the
+  proposal's promised "cache-aware contiguous neighbor storage." On-disk `.qfx` format unchanged.
+- **Result:** build ~12–15% faster (80k: 59.3 s → 52.3 s); recall unchanged (round-trip + recall
+  tests still pass, search bit-identical). The on-disk format and all 23 tests are intact.
+- **Honest caveat (the point):** the *slope* barely changed — flattening removed the neighbor-list
+  pointer-chase (a real, self-inflicted miss), but the dominant cost is still the **random reads of
+  the 512-byte vectors** themselves, which exceed L3 and have no locality (the fundamental memory
+  wall). Prefetch hides only part of that latency. So this is a genuine constant-factor win and the
+  right architectural layout, but it does NOT recover a clean O(N·log N) wall-clock — exactly as
+  predicted. The remaining build-speed levers are parallel build (÷cores) and efConstruction.
+- Adjacency is now flat in both engines (NSW was already flat; HNSW now matches).
+
+---
+
 ## P1 — "O(N²) build" investigation → it was NOT O(N²) (measured correction)
 
 - **Hypothesis going in:** the per-insert `std::vector<bool> visited(num_nodes_)` allocation in

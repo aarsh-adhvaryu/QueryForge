@@ -121,3 +121,18 @@ Real levers: **parallel build** (÷cores), **efConstruction** (efc 200→100 ≈
 loss: 80k recall 69.95%→67.45%), and flattening layer-0 adjacency for locality. `VisitedSet` is kept
 (correct; removes a real O(N)-per-insert term that matters at ≥1M; per-thread scratch enables safe
 parallel build) — just not the headline.
+
+### P1.5 — Flatten adjacency + prefetch (locality)
+
+Replaced the nested-`std::vector` HNSW adjacency with contiguous fixed-stride blocks + neighbor
+prefetch (dim=128, M=16, efc=200):
+
+| N | build (nested) | build (flat + prefetch) | gain |
+|---|----------------|--------------------------|------|
+| 20000 | 9.3 s  | 8.3 s  | ~11% |
+| 40000 | 24.1 s | 20.5 s | ~15% |
+| 80000 | 59.3 s | 52.3 s | ~12% |
+
+Recall unchanged (80k @ ef=200 = 70.1%). The constant improved but the *slope* didn't — confirming
+the remaining bottleneck is the random 512-B vector reads exceeding L3 (the memory wall), not the
+adjacency layout. Next real levers: parallel build, efConstruction.

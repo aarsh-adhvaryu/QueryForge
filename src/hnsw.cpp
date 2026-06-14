@@ -37,7 +37,9 @@ HnswIndex::HnswIndex(std::size_t dim, std::size_t M, std::size_t ef_construction
       ef_construction_(ef_construction),
       metric_(metric),
       mL_(1.0 / std::log(static_cast<double>(M))),
-      rng_(seed) {}
+      rng_(seed),
+      stride0_(2 * M + 1),
+      strideU_(M + 1) {}
 
 float HnswIndex::distance(const float* a, const float* b) const noexcept {
   if (metric_ == Metric::Cosine) return 1.0f - dot(a, b, dim_);
@@ -60,8 +62,10 @@ std::uint32_t HnswIndex::greedy_search_layer(const float* query, std::uint32_t e
   bool improved = true;
   while (improved) {
     improved = false;
-    const auto& nbrs = links(cur, layer);
-    for (const std::uint32_t n : nbrs) {
+    const std::uint32_t* b = link_block(cur, layer);
+    const std::uint32_t cnt = b[0];
+    for (std::uint32_t i = 0; i < cnt; ++i) {
+      const std::uint32_t n = b[1 + i];
       const float d = distance(query, vector_at(n));
       if (stats) stats->distance_computations++;
       if (d < cur_d) {
@@ -94,7 +98,13 @@ std::vector<Neighbor> HnswIndex::search_layer(const float* query, std::uint32_t 
     candidates.pop();
     if (stats) stats->nodes_visited++;
 
-    for (const std::uint32_t n : links(cur.id, layer)) {
+    const std::uint32_t* b = link_block(cur.id, layer);
+    const std::uint32_t cnt = b[0];
+    for (std::uint32_t i = 0; i < cnt; ++i) {
+      const std::uint32_t n = b[1 + i];
+      // Prefetch the next neighbor's vector (read, low temporal locality) to hide DRAM latency
+      // while we compute the distance for this one — the graph access pattern is random.
+      if (i + 1 < cnt) __builtin_prefetch(vector_at(b[1 + i + 1]), 0, 1);
       if (visited.test(n)) continue;
       visited.set(n);
       const float d = distance(query, vector_at(n));
@@ -158,7 +168,13 @@ std::uint32_t HnswIndex::add(const float* vec) {
   } else {
     std::copy(vec, vec + dim_, dst);
   }
-  links_.emplace_back(node_layer + 1);  // layers 0..node_layer, all empty
+  // Allocate this node's adjacency blocks (counts start at 0). Layer 0 goes in the flat array;
+  // upper layers (if any) get one small contiguous block.
+  node_layer_.push_back(node_layer);
+  links0_.resize((num_nodes_ + 1) * stride0_, 0);
+  links_upper_.emplace_back();
+  if (node_layer > 0)
+    links_upper_.back().assign(static_cast<std::size_t>(node_layer) * strideU_, 0);
 
   if (num_nodes_ == 0) {  // first node defines the top of the hierarchy
     entry_point_ = id;
@@ -182,25 +198,31 @@ std::uint32_t HnswIndex::add(const float* vec) {
     const std::size_t m = max_M_for(layer);
     std::vector<Neighbor> candidates = search_layer(dst, entry, layer, ef_construction_, nullptr);
 
-    // Pick this node's neighbors at this layer.
+    // Pick this node's neighbors at this layer and write its contiguous block.
     std::vector<Neighbor> selected = candidates;
     select_neighbors(selected, m);
-    auto& my_links = links(id, layer);
-    my_links.clear();
-    for (const Neighbor& nb : selected) my_links.push_back(nb.id);
+    std::uint32_t* myb = link_block(id, layer);
+    myb[0] = static_cast<std::uint32_t>(selected.size());
+    for (std::size_t i = 0; i < selected.size(); ++i) myb[1 + i] = selected[i].id;
 
     // Add the reverse edges, pruning any neighbor that now exceeds the layer's cap.
     for (const Neighbor& nb : selected) {
-      auto& nbr_links = links(nb.id, layer);
-      nbr_links.push_back(id);
-      if (nbr_links.size() > m) {
+      std::uint32_t* nbb = link_block(nb.id, layer);
+      const std::uint32_t cnt = nbb[0];
+      if (cnt < m) {
+        nbb[1 + cnt] = id;  // room: append
+        nbb[0] = cnt + 1;
+      } else {
+        // Full: re-select the m best of {existing neighbors, id} via the diversity heuristic.
         const float* vnb = vector_at(nb.id);
         std::vector<Neighbor> cand;
-        cand.reserve(nbr_links.size());
-        for (const std::uint32_t x : nbr_links) cand.push_back({distance(vnb, vector_at(x)), x});
+        cand.reserve(cnt + 1);
+        for (std::uint32_t i = 0; i < cnt; ++i)
+          cand.push_back({distance(vnb, vector_at(nbb[1 + i])), nbb[1 + i]});
+        cand.push_back({distance(vnb, vector_at(id)), id});
         select_neighbors(cand, m);
-        nbr_links.clear();
-        for (const Neighbor& c : cand) nbr_links.push_back(c.id);
+        nbb[0] = static_cast<std::uint32_t>(cand.size());
+        for (std::size_t i = 0; i < cand.size(); ++i) nbb[1 + i] = cand[i].id;
       }
     }
 

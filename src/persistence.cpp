@@ -129,14 +129,16 @@ void HnswIndex::save(const std::string& path) const {
   os.write(reinterpret_cast<const char*>(vectors_.data()),
            static_cast<std::streamsize>(vectors_.size() * sizeof(float)));
 
-  // Graph block.
+  // Graph block (on-disk format unchanged: per node = node_layer, then per layer = count + ids).
   for (std::size_t i = 0; i < num_nodes_; ++i) {
-    const auto& layers = links_[i];
-    write_pod<std::int32_t>(os, static_cast<std::int32_t>(layers.size()) - 1);  // node_layer
-    for (const auto& nbrs : layers) {
-      write_pod<std::uint32_t>(os, static_cast<std::uint32_t>(nbrs.size()));
-      os.write(reinterpret_cast<const char*>(nbrs.data()),
-               static_cast<std::streamsize>(nbrs.size() * sizeof(std::uint32_t)));
+    const int node_layer = node_layer_[i];
+    write_pod<std::int32_t>(os, node_layer);
+    for (int layer = 0; layer <= node_layer; ++layer) {
+      const std::uint32_t* b = link_block(static_cast<std::uint32_t>(i), layer);
+      const std::uint32_t count = b[0];
+      write_pod<std::uint32_t>(os, count);
+      os.write(reinterpret_cast<const char*>(b + 1),
+               static_cast<std::streamsize>(count * sizeof(std::uint32_t)));
     }
   }
   if (!os) throw std::runtime_error("QueryForge: write error on " + path);
@@ -174,15 +176,19 @@ HnswIndex HnswIndex::load(const std::string& path) {
   idx.vectors_.resize(static_cast<std::size_t>(num_nodes * dim));
   r.read_into(idx.vectors_.data(), idx.vectors_.size() * sizeof(float));
 
-  idx.links_.resize(static_cast<std::size_t>(num_nodes));
+  idx.node_layer_.resize(static_cast<std::size_t>(num_nodes));
+  idx.links0_.assign(static_cast<std::size_t>(num_nodes) * idx.stride0_, 0);
+  idx.links_upper_.resize(static_cast<std::size_t>(num_nodes));
   for (std::size_t i = 0; i < idx.num_nodes_; ++i) {
     const std::int32_t node_layer = r.read<std::int32_t>();
-    auto& layers = idx.links_[i];
-    layers.resize(static_cast<std::size_t>(node_layer) + 1);
-    for (auto& nbrs : layers) {
+    idx.node_layer_[i] = node_layer;
+    if (node_layer > 0)
+      idx.links_upper_[i].assign(static_cast<std::size_t>(node_layer) * idx.strideU_, 0);
+    for (int layer = 0; layer <= node_layer; ++layer) {
       const std::uint32_t count = r.read<std::uint32_t>();
-      nbrs.resize(count);
-      if (count) r.read_into(nbrs.data(), count * sizeof(std::uint32_t));
+      std::uint32_t* b = idx.link_block(static_cast<std::uint32_t>(i), layer);
+      b[0] = count;
+      if (count) r.read_into(b + 1, count * sizeof(std::uint32_t));
     }
   }
   return idx;

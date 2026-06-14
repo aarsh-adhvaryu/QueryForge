@@ -2,6 +2,16 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## P1 — performance pass (in progress, post-bucket-A)
+- **VisitedSet** (`src/visited_set.hpp`): reusable thread_local visited set with O(1) version-tag
+  clear, replacing per-search `vector<bool>` allocations in `hnsw.cpp` + `nsw.cpp`. (Measurement
+  showed this was *not* the build bottleneck; the "O(N²)" claim was corrected to ~O(N^1.4).)
+- **Flattened HNSW adjacency + prefetch**: nested `vector<vector<vector>>` replaced with contiguous
+  fixed-stride blocks (`links0_` flat array for layer 0 + per-node upper blocks) and
+  `__builtin_prefetch` of neighbor vectors in `search_layer`. ~12–15% faster build; recall and the
+  `.qfx` on-disk format unchanged; all 23 tests pass. Realizes the doc's "cache-aware contiguous
+  neighbor storage." Remaining build levers: parallel build, efConstruction.
+
 ## A7 — FastAPI backend + React frontend (mock data) — bucket A complete
 - `backend/app.py`: FastAPI service with `/health`, `/catalog`, `/search/id/{id}`,
   `POST /search/image` (raw image bytes), `/images/*`, and serves the frontend at `/`. Builds a

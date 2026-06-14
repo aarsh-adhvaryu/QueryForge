@@ -72,12 +72,18 @@ class HnswIndex {
   // Choose which neighbors to keep from candidates, capped at `m`. Step 1 = naive closest-m.
   void select_neighbors(std::vector<Neighbor>& candidates, std::size_t m) const;
 
-  // Neighbor list of `node` at `layer` (node must exist at that layer).
-  std::vector<std::uint32_t>& links(std::uint32_t node, int layer) {
-    return links_[node][static_cast<std::size_t>(layer)];
+  // Adjacency is stored as fixed-stride contiguous blocks for cache locality. Each (node, layer)
+  // block is laid out as [count, id_0, id_1, ...] with `max_M_for(layer)` id slots. Layer 0 (every
+  // node, the hot path) lives in one big flat array `links0_`; the rarer upper layers live in a
+  // small contiguous per-node block. This replaces the old nested vector<vector<vector>>, whose
+  // three levels of pointer indirection caused a cache miss on every neighbor lookup.
+  std::uint32_t* link_block(std::uint32_t node, int layer) noexcept {
+    return layer == 0 ? &links0_[static_cast<std::size_t>(node) * stride0_]
+                      : &links_upper_[node][static_cast<std::size_t>(layer - 1) * strideU_];
   }
-  const std::vector<std::uint32_t>& links(std::uint32_t node, int layer) const {
-    return links_[node][static_cast<std::size_t>(layer)];
+  const std::uint32_t* link_block(std::uint32_t node, int layer) const noexcept {
+    return layer == 0 ? &links0_[static_cast<std::size_t>(node) * stride0_]
+                      : &links_upper_[node][static_cast<std::size_t>(layer - 1) * strideU_];
   }
 
   std::size_t dim_;
@@ -93,10 +99,13 @@ class HnswIndex {
   std::uint32_t entry_point_ = 0;
   int max_layer_ = 0;
 
-  std::vector<float> vectors_;  // num_nodes_ * dim_, contiguous
-  // links_[node][layer] = neighbor ids of `node` at `layer`. A node has layers 0..node_layer.
-  // (Layer 0 is the hot path; flattening it into a contiguous array is a logged perf TODO.)
-  std::vector<std::vector<std::vector<std::uint32_t>>> links_;
+  std::size_t stride0_;  // layer-0 block stride = M0_ + 1 (count slot + M0_ id slots)
+  std::size_t strideU_;  // upper-layer block stride = M_ + 1
+
+  std::vector<float> vectors_;          // num_nodes_ * dim_, contiguous
+  std::vector<int> node_layer_;         // max layer of each node
+  std::vector<std::uint32_t> links0_;   // layer-0 adjacency: num_nodes_ * stride0_, one flat array
+  std::vector<std::vector<std::uint32_t>> links_upper_;  // per node: layers 1..node_layer (contiguous)
 };
 
 }  // namespace queryforge
