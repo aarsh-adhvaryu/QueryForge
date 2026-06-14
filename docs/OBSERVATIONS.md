@@ -5,6 +5,35 @@ behind decisions. Newest entries on top.
 
 ---
 
+## P1 — "O(N²) build" investigation → it was NOT O(N²) (measured correction)
+
+- **Hypothesis going in:** the per-insert `std::vector<bool> visited(num_nodes_)` allocation in
+  `search_layer` made the build O(N²). Implemented a reusable `thread_local` `VisitedSet`
+  (`src/visited_set.hpp`) with an O(1) version-tag clear.
+- **Measured: it barely helped.** 100k build 84 s → 79 s (~6%); 30k 18 s → 15.9 s. A first version
+  even regressed to no-gain because `assign(n,0)` re-zeroed all N entries every insert (fixed with
+  geometric `resize`). Either way, the visited allocation was never the bottleneck.
+- **Real scaling, measured (dim=128, M=16, efc=200):** 20k=9.3 s, 40k=24.1 s, 80k=59.3 s →
+  wall-clock ≈ **O(N^1.4)**, not O(N²) (that would be ~4× per doubling; we see ~2.5×). The earlier
+  "O(N²)" label in the docs was a wrong extrapolation from two data points.
+- **Where the time actually goes:** each insert runs the diversity heuristic `select_neighbors` over
+  up to `efConstruction` candidates, each compared against up to `M0` chosen → ~O(efC·M) distance
+  computations per insert (thousands), plus back-link pruning. That's bounded in N but a big
+  constant. The *superlinear* wall-clock comes from **cache effects**: `vectors_` exceeds L3 (~64k
+  vectors at dim 128) and the nested-`std::vector` adjacency scatters memory, so each distance comp
+  gets slower as N grows. Confirmed the lever: **efC 200→100 nearly halved build (62 s→35 s)** at
+  80k with negligible recall change.
+- **Decision:** keep the `VisitedSet` — it's correct, removes a genuine O(N)-per-insert term that
+  *would* matter at ≥1M, and gives each thread its own scratch (a prerequisite for safe parallel
+  build) — but it is **not** the headline. The real build-speed levers are (1) **parallel
+  multi-threaded build** (÷cores), (2) **efConstruction** tuning (linear), (3) flatten layer-0
+  adjacency for locality.
+- **Lesson (the important one):** measure before optimizing. I "fixed" the wrong thing twice; a
+  simple scaling probe (20/40/80k) revealed the true ~N^1.4 cache-bound behavior. The docs that
+  claimed "O(N²)" are corrected.
+
+---
+
 ## A7 — FastAPI backend + React frontend (bucket A complete)
 
 - **Built:** a FastAPI backend serving the proposal's endpoints over a mock catalog, and a

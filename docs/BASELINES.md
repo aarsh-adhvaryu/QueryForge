@@ -99,7 +99,25 @@ build-once / load-many win: loading is ~1000× faster than rebuilding.
 
 - 640 bytes/vector = 512 (128 floats) + ~128 for the per-layer adjacency. Round-trips are bit-exact:
   the loaded index returns identical search results (verified in tests and the tool).
-- **Build time is superlinear** (30k→18s, 100k→84s) — the known bottleneck is that each insert
-  allocates+zeroes a `vector<bool> visited` of size N inside `search_layer`, making build ~O(N²).
-  Fixing this (a reusable visited-version array) is the top item for the perf pass before scaling
-  to 500k. Load time is unaffected and already excellent.
+- **Build time is superlinear** (30k→18s, 100k→84s). NOTE: originally attributed to the per-insert
+  `visited` allocation ("O(N²)") — **that was wrong** (see the P1 section below and OBSERVATIONS).
+  Load time is unaffected and already excellent.
+
+## P1 — build-complexity investigation (correction)
+
+Replaced the per-insert `std::vector<bool> visited(N)` with a reusable `thread_local VisitedSet`
+(`src/visited_set.hpp`, O(1) version-tag clear). Effect on build time was minor — the visited
+allocation was **not** the bottleneck.
+
+| N | build (before, vector<bool>) | build (after, VisitedSet) |
+|---|------------------------------|----------------------------|
+| 30000  | 18.0 s | 15.9 s |
+| 100000 | 84.0 s | 79.0 s |
+
+Measured scaling (dim=128, M=16, efc=200): 20k=9.3s, 40k=24.1s, 80k=59.3s → **wall-clock ≈ O(N^1.4)**,
+not O(N²). Dominant cost = per-insert distance computations in the diversity heuristic
+(≈ O(efConstruction·M) per insert) + cache misses once `vectors_` exceeds L3 (~64k vectors @ dim128).
+Real levers: **parallel build** (÷cores), **efConstruction** (efc 200→100 ≈ halves build, ~no recall
+loss: 80k recall 69.95%→67.45%), and flattening layer-0 adjacency for locality. `VisitedSet` is kept
+(correct; removes a real O(N)-per-insert term that matters at ≥1M; per-thread scratch enables safe
+parallel build) — just not the headline.

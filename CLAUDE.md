@@ -41,26 +41,28 @@ Build everything (incl. Python module + web tests): `cmake -S . -B build -DQF_BU
 ## Performance & time complexity — investigate next
 
 The engine is correct and hits its recall target, but it has **not** had a performance pass. Before
-scaling to the 500K dataset, look into these (highest priority first):
+scaling to the 500K dataset, look into these (highest priority first).
 
-- **Build is ~O(N²) — the main thing to fix.** Each `add()` calls `search_layer`, which allocates
-  and zeroes a fresh `std::vector<bool> visited(num_nodes_)` every insert → O(N) per insert → O(N²)
-  total. Measured: 30k builds in 18 s, 100k in 84 s (superlinear). **Fix:** a reusable
-  *visited-version array* — keep one `std::vector<uint32_t> visited(N)` for the whole build plus a
-  `current_visit` counter; bump the counter (O(1)) to "clear", and treat `visited[x] ==
-  current_visit` as the seen-flag. This is what hnswlib does; it brings build down to ≈ O(N·log N).
-  Caveat: it makes a search *stateful*, so under parallel build / concurrent writes each thread
-  needs its own visited array.
-- **Reuse the search heaps** (candidate/result priority queues in `search_layer`) instead of
-  reallocating them per query.
-- **Flatten layer-0 adjacency** (currently nested `std::vector`) into a contiguous array — layer 0
-  is the hot path, so this helps cache locality.
-- Then: **parallel multi-threaded build** (queued enhancement; record before/after build time).
+**Build complexity — corrected by measurement (see `docs/OBSERVATIONS.md`):** the build is
+~**O(N^1.4)** wall-clock, *not* O(N²). The earlier "O(N²) from the `visited` allocation" claim was
+wrong — replacing that allocation with a reusable `VisitedSet` (`src/visited_set.hpp`, already done)
+changed build time by only ~6%. The real cost is the per-insert distance computations in the
+diversity heuristic (≈ O(efConstruction·M) per insert), amplified by **cache misses** once `vectors_`
+exceeds L3 (~64k vectors at dim 128) and because the nested-`std::vector` adjacency scatters memory.
+
+Real build-speed levers, in order:
+- **Parallel multi-threaded build** — the biggest wall-clock win (÷ cores). `VisitedSet` is
+  `thread_local`, so each thread already gets its own scratch — the groundwork is in place.
+- **efConstruction tuning** — linear lever (efc 200→100 ≈ halves build time; measured ~no recall
+  loss). Pick the lowest efc that holds recall.
+- **Flatten layer-0 adjacency** (currently nested `std::vector`) into a contiguous array → cache
+  locality on the hot path.
+- **Reuse the search heaps** (candidate/result priority queues in `search_layer`) per query.
 
 Reference complexities (HNSW as designed): search ≈ O(log N) nodes visited; build ≈ O(N·log N)
-once the visited-array fix lands; memory ≈ N·dim·4 B (vectors) + ~N·M·4·1.5 B (edges). Always
-re-confirm changes with `qf_recall` (recall must not regress) and `qf_persist` (build time). Load
-time is already excellent and unaffected by the build issue.
+algorithmically (wall-clock ~N^1.4 here due to cache effects); memory ≈ N·dim·4 B (vectors) +
+~N·M·4·1.5 B (edges). Always re-confirm changes with `qf_recall` (recall must not regress) and
+`qf_persist` (build time). Load time is excellent and unaffected.
 
 ## Build / test / run
 

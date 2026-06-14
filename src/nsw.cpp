@@ -4,6 +4,8 @@
 #include <cmath>
 #include <queue>
 
+#include "visited_set.hpp"
+
 namespace queryforge {
 namespace {
 
@@ -42,14 +44,16 @@ float NswIndex::distance(const float* a, const float* b) const noexcept {
 // ---- The core: greedy beam search over one layer ---------------------------------------
 std::vector<Neighbor> NswIndex::search_layer(const float* query, std::uint32_t entry,
                                              std::size_t ef, SearchStats* stats) const {
-  std::vector<bool> visited(num_nodes_, false);
+  // Reusable per-thread visited set: O(1) clear, no per-call allocation (see visited_set.hpp).
+  static thread_local detail::VisitedSet visited;
+  visited.reset(num_nodes_);
 
   std::priority_queue<Neighbor, std::vector<Neighbor>, CloserFirst> candidates;  // frontier
   std::priority_queue<Neighbor, std::vector<Neighbor>, FartherFirst> results;    // best so far
 
   const float d0 = distance(query, vector_at(entry));
   if (stats) stats->distance_computations++;
-  visited[entry] = true;
+  visited.set(entry);
   candidates.push({d0, entry});
   results.push({d0, entry});
 
@@ -65,8 +69,8 @@ std::vector<Neighbor> NswIndex::search_layer(const float* query, std::uint32_t e
     const std::uint16_t cnt = link_count(cur.id);
     for (std::uint16_t i = 0; i < cnt; ++i) {
       const std::uint32_t n = nbrs[i];
-      if (visited[n]) continue;
-      visited[n] = true;
+      if (visited.test(n)) continue;
+      visited.set(n);
 
       const float d = distance(query, vector_at(n));
       if (stats) stats->distance_computations++;

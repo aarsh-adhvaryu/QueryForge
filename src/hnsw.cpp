@@ -5,6 +5,8 @@
 #include <limits>
 #include <queue>
 
+#include "visited_set.hpp"
+
 namespace queryforge {
 namespace {
 
@@ -74,13 +76,15 @@ std::uint32_t HnswIndex::greedy_search_layer(const float* query, std::uint32_t e
 
 std::vector<Neighbor> HnswIndex::search_layer(const float* query, std::uint32_t entry, int layer,
                                               std::size_t ef, SearchStats* stats) const {
-  std::vector<bool> visited(num_nodes_, false);
+  // Reusable per-thread visited set: O(1) clear, no per-call allocation (see visited_set.hpp).
+  static thread_local detail::VisitedSet visited;
+  visited.reset(num_nodes_);
   std::priority_queue<Neighbor, std::vector<Neighbor>, CloserFirst> candidates;
   std::priority_queue<Neighbor, std::vector<Neighbor>, FartherFirst> results;
 
   const float d0 = distance(query, vector_at(entry));
   if (stats) stats->distance_computations++;
-  visited[entry] = true;
+  visited.set(entry);
   candidates.push({d0, entry});
   results.push({d0, entry});
 
@@ -91,8 +95,8 @@ std::vector<Neighbor> HnswIndex::search_layer(const float* query, std::uint32_t 
     if (stats) stats->nodes_visited++;
 
     for (const std::uint32_t n : links(cur.id, layer)) {
-      if (visited[n]) continue;
-      visited[n] = true;
+      if (visited.test(n)) continue;
+      visited.set(n);
       const float d = distance(query, vector_at(n));
       if (stats) stats->distance_computations++;
       if (results.size() < ef || d < results.top().distance) {
