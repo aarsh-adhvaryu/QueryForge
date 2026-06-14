@@ -96,15 +96,20 @@ class ClipEmbedder(Embedder):
     def embed_image(self, path: str) -> np.ndarray:
         return self.embed_images([path])[0]
 
-    def embed_images(self, paths, batch_size: int = 256) -> np.ndarray:
-        """Batched embedding — runs `batch_size` images per GPU forward pass.
+    def embed_images(self, paths, batch_size: int | None = None) -> np.ndarray:
+        """Batched embedding — runs `batch_size` images per forward pass.
 
         Embedding one image at a time leaves the GPU mostly idle; batching is the difference
         between minutes and hours for a 500K catalog. Outputs are L2-normalized so cosine
         similarity is a plain dot product (and the index's normalization is a no-op on them).
+        Default batch size adapts to the device (large on GPU, small on CPU where activations are
+        big and memory-bound).
         """
         import torch
         from PIL import Image
+
+        if batch_size is None:
+            batch_size = 256 if self.device == "cuda" else 16
 
         paths = list(paths)
         if not paths:
