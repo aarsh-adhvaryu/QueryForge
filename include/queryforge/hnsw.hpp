@@ -36,6 +36,10 @@ class HnswIndex {
 
   std::uint32_t add(const float* vec);
 
+  // Pre-allocate capacity for `n` total vectors before a bulk build, to avoid repeatedly
+  // reallocating (and copying) the growing vector/adjacency arrays. Optional but worth it at scale.
+  void reserve(std::size_t n);
+
   std::vector<Neighbor> search(const float* query, std::size_t k, std::size_t ef,
                                SearchStats* stats = nullptr) const;
 

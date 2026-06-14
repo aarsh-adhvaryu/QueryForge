@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
   // Build.
   auto t0 = clock::now();
   queryforge::HnswIndex index(dim, M, efc, metric);
+  index.reserve(N);  // pre-allocate: avoids realloc copies + the transient 2x memory spike
   for (std::size_t i = 0; i < N; ++i) index.add(&data[i * dim]);
   auto t1 = clock::now();
   const double build_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();

@@ -139,6 +139,7 @@ void HnswIndex::select_neighbors(std::vector<Neighbor>& candidates, std::size_t 
   if (candidates.size() <= m) return;
 
   std::vector<Neighbor> chosen;
+  std::vector<Neighbor> deferred;  // rejected by the diversity rule, kept (sorted) for backfill
   chosen.reserve(m);
   for (const Neighbor& c : candidates) {
     if (chosen.size() >= m) break;
@@ -151,9 +152,27 @@ void HnswIndex::select_neighbors(std::vector<Neighbor>& candidates, std::size_t 
         break;
       }
     }
-    if (diverse) chosen.push_back(c);
+    if (diverse) {
+      chosen.push_back(c);
+    } else {
+      deferred.push_back(c);
+    }
+  }
+  // Keep-pruned-connections: if the diversity rule left us short of m, top up with the closest
+  // rejected candidates so every node keeps a full neighbor quota. Under-connected nodes force
+  // searches to use a much larger ef for the same recall; backfilling shifts the recall/ef curve
+  // left (same recall, cheaper queries). `deferred` is already in ascending-distance order.
+  for (std::size_t i = 0; i < deferred.size() && chosen.size() < m; ++i) {
+    chosen.push_back(deferred[i]);
   }
   candidates.swap(chosen);
+}
+
+void HnswIndex::reserve(std::size_t n) {
+  vectors_.reserve(n * dim_);
+  links0_.reserve(n * stride0_);
+  node_layer_.reserve(n);
+  links_upper_.reserve(n);
 }
 
 std::uint32_t HnswIndex::add(const float* vec) {

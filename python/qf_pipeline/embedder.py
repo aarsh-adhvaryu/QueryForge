@@ -94,10 +94,30 @@ class ClipEmbedder(Embedder):
         return self._dim
 
     def embed_image(self, path: str) -> np.ndarray:
+        return self.embed_images([path])[0]
+
+    def embed_images(self, paths, batch_size: int = 256) -> np.ndarray:
+        """Batched embedding — runs `batch_size` images per GPU forward pass.
+
+        Embedding one image at a time leaves the GPU mostly idle; batching is the difference
+        between minutes and hours for a 500K catalog. Outputs are L2-normalized so cosine
+        similarity is a plain dot product (and the index's normalization is a no-op on them).
+        """
         import torch
         from PIL import Image
 
-        img = self.preprocess(Image.open(path).convert("RGB")).unsqueeze(0).to(self.device)
-        with torch.no_grad():
-            feats = self.model.encode_image(img)
-        return feats.cpu().numpy().astype(np.float32)[0]
+        paths = list(paths)
+        if not paths:
+            return np.empty((0, self.dim), dtype=np.float32)
+
+        chunks = []
+        for start in range(0, len(paths), batch_size):
+            batch = paths[start:start + batch_size]
+            tensors = torch.stack(
+                [self.preprocess(Image.open(p).convert("RGB")) for p in batch]
+            ).to(self.device)
+            with torch.no_grad():
+                feats = self.model.encode_image(tensors)
+                feats = feats / feats.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+            chunks.append(feats.cpu().numpy().astype(np.float32))
+        return np.concatenate(chunks, axis=0)

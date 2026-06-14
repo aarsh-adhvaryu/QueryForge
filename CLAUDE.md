@@ -112,6 +112,9 @@ Notes:
   flat array; HNSW uses fixed-stride blocks (`links0_` flat array for layer 0 + per-node upper
   blocks), each block `[count, ids...]` — see `link_block()` in `hnsw.hpp`.
 - Validate any index change with the recall harness / recall tests vs brute force.
+- Tuning caveat: uniform-random synthetic vectors are the WORST case for recall (no clusters →
+  curse of dimensionality). Real CLIP embeddings cluster and recall much higher at the same M/ef —
+  tune on the real data (P5), don't over-tune on synthetic. Lever order: M (32–48) > efSearch > efc.
 
 ## Target hardware (local-first)
 

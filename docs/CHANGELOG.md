@@ -2,6 +2,19 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## Pre-data hardening (before the real 500K run)
+A file review before bucket B surfaced three fixes (all tested on synthetic data):
+- **Batched `ClipEmbedder.embed_images`** (`python/qf_pipeline/embedder.py`): embeds `batch_size`
+  images per GPU forward pass (was 1-at-a-time → would've been hours for 500K) and L2-normalizes
+  the output. Verified at P4 once open_clip is installed.
+- **`HnswIndex::reserve(n)`** (`hnsw.hpp/.cpp`, exposed in bindings; called by `add_batch` and the
+  `qf_persist` tool): pre-allocates vectors/adjacency to avoid realloc copies and the transient 2×
+  memory spike during a bulk build.
+- **Keep-pruned-connections backfill** in `select_neighbors` (`hnsw.cpp`): tops a node's neighbor
+  list back up to M from the closest diversity-rejected candidates (standard hnswlib behavior).
+  Neutral on uniform-random synthetic data (the diversity rule rarely leaves nodes short in 128-d),
+  kept because it's correct and should help on clustered real embeddings. 23 tests still pass.
+
 ## P1 — performance pass (in progress, post-bucket-A)
 - **VisitedSet** (`src/visited_set.hpp`): reusable thread_local visited set with O(1) version-tag
   clear, replacing per-search `vector<bool>` allocations in `hnsw.cpp` + `nsw.cpp`. (Measurement

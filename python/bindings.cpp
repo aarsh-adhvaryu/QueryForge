@@ -53,12 +53,16 @@ PYBIND11_MODULE(queryforge, m) {
               throw std::invalid_argument("add_batch() expects a 2-D array of shape (n, dim)");
             const std::size_t n = static_cast<std::size_t>(mat.shape(0));
             const float* base = mat.data();
+            self.reserve(self.size() + n);  // avoid repeated reallocation during the bulk insert
             std::vector<std::uint32_t> ids;
             ids.reserve(n);
             for (std::size_t i = 0; i < n; ++i) ids.push_back(self.add(base + i * self.dim()));
             return ids;
           },
           py::arg("vectors"), "Insert n vectors from an (n, dim) array; returns the list of ids.")
+
+      .def("reserve", &HnswIndex::reserve, py::arg("n"),
+           "Pre-allocate capacity for n total vectors before a bulk build (optional, faster).")
 
       .def(
           "search",

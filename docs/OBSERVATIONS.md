@@ -5,6 +5,34 @@ behind decisions. Newest entries on top.
 
 ---
 
+## Pre-data review + hardening (before bucket B)
+
+Reviewed all files before pouring real data through the engine. No correctness bugs (sources are
+`-Wall -Wextra -Wconversion` clean; 23 tests pass). Three fixes made, all testable on synthetic data:
+
+- **Batched CLIP embedding (#1):** `ClipEmbedder.embed_image` was 1-image-at-a-time → a GPU would
+  sit ~idle and 500K could take hours. Added a batched `embed_images` (256/forward pass) + output
+  L2-normalization. Runtime-verified at P4 (open_clip not installed yet).
+- **`reserve(n)` for bulk build (#2):** avoids repeated reallocation/copying and the transient 2×
+  memory spike (matters at 500K×768 = 1.5 GB vectors). Wired into `add_batch` and `qf_persist`.
+- **Keep-pruned-connections backfill (#3):** measured before/after recall@10 at 80k —
+  ef200/400/800 = 70.5/84.95/92.5% vs 70.0/85.5/92.7% (**neutral**). Expected: in 128-d uniform
+  random the diversity rule almost never leaves a node short of M, so backfill rarely fires. Kept
+  anyway (standard, correct, and should help on clustered data).
+
+**Most important insight from this review (guides P5 tuning):** *uniform-random synthetic vectors
+are the WORST case for ANN recall.* With no cluster structure, every point is ~equidistant (curse of
+dimensionality) — that's why 80k synthetic needs ef≈800 for ~93%. **Real CLIP embeddings cluster
+heavily** (the structure HNSW is built to exploit), so real-data recall at the same M/ef will be
+substantially higher. Do NOT over-tune on synthetic random data; measure and tune on the real
+embeddings at P5. Lever order for real data: M (32–48) > efSearch > efConstruction.
+
+**Recall-vs-N is normal, not a bug:** ef recovers recall (80k: 70→85→93% as ef 200→400→800), so the
+graph is correct; you just scale ef (and M) with N. The recall/ef curve is on the weaker side on
+synthetic only because synthetic is the hard case.
+
+---
+
 ## P1.5 — Flatten HNSW adjacency + prefetch (cache locality)
 
 - **Done:** replaced the nested `std::vector<std::vector<std::vector<uint32_t>>>` adjacency with
