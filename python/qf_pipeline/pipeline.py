@@ -40,7 +40,7 @@ def build_catalog(products_meta: Sequence[dict], embedder: Embedder,
 
 
 def search_similar(index, store: MetadataStore, embedder: Embedder, query_image: str,
-                   k: int = 5, ef: int = 64) -> list[dict]:
+                   k: int = 5, ef: int = 32) -> list[dict]:
     """Return the k most visually similar products to `query_image`, enriched with metadata."""
     vec = embedder.embed_image(query_image).astype("float32")
     ids, dists = index.search(vec, k=k, ef=ef)

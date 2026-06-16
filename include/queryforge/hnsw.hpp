@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <random>
 #include <string>
 #include <vector>
@@ -35,6 +36,14 @@ class HnswIndex {
             std::uint32_t seed = 100);
 
   std::uint32_t add(const float* vec);
+
+  // Bulk-build the index from `n` vectors (ids 0..n-1) using `threads` workers (0 = all cores).
+  // This is the static build-once path: it requires an EMPTY index. It pre-sizes all storage so
+  // the arrays never reallocate, then wires every node's edges in parallel under striped per-node
+  // locks. The single-threaded `add` above is unchanged and remains the path for incremental/dynamic
+  // inserts. Edge formation depends on thread interleaving, so the resulting graph is not bit-identical
+  // run-to-run — recall is validated by measurement, not by determinism.
+  void add_batch_parallel(const float* data, std::size_t n, unsigned threads = 0);
 
   // Pre-allocate capacity for `n` total vectors before a bulk build, to avoid repeatedly
   // reallocating (and copying) the growing vector/adjacency arrays. Optional but worth it at scale.
@@ -75,6 +84,11 @@ class HnswIndex {
 
   // Choose which neighbors to keep from candidates, capped at `m`. Step 1 = naive closest-m.
   void select_neighbors(std::vector<Neighbor>& candidates, std::size_t m) const;
+
+  // Wire one already-stored node (its vector/layer set in phase A) into the graph by searching each
+  // layer and writing forward + reverse edges. Used only by add_batch_parallel; all link-block writes
+  // are guarded by the striped lock pool `locks` (size `nlocks`, indexed by node id).
+  void link_node(std::uint32_t id, std::mutex* locks, std::size_t nlocks);
 
   // Adjacency is stored as fixed-stride contiguous blocks for cache locality. Each (node, layer)
   // block is laid out as [count, id_0, id_1, ...] with `max_M_for(layer)` id slots. Layer 0 (every

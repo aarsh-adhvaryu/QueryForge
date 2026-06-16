@@ -2,6 +2,29 @@
 
 Human-readable summary of what changed, stage by stage. Newest on top.
 
+## Bucket B — real data (studio-gpu: 16 cores + RTX PRO 6000, 96 GB)
+Engine work complete; only the local-hardware (Core Ultra 9 / RTX 5070 Ti) re-measurement remains.
+- **B1 — pluggable real-dataset loader** (`python/qf_pipeline/build_real.py`): `--dataset`
+  imagenet / cc3m / fashion, each streaming images + metadata. Images saved to sharded subdirs
+  (10k/dir) with a `--max-side` downscale cap (defaults 256; lossless for CLIP, bounds disk at 500K).
+  Added a **same-class@10** metric (only meaningful once classes are populated — needs scale) and
+  embedding **checkpointing** (`embeddings.npy`) so a build/disk failure never discards the GPU pass.
+- **B2 — parallel build** (`HnswIndex::add_batch_parallel`, `hnsw.hpp/.cpp`; bound in
+  `bindings.cpp`, GIL released): static build-once path that pre-sizes storage then wires edges
+  across worker threads under striped per-node locks. **9.3× on 16 cores** (184.6 s → 19.9 s at
+  40k×384). Sequential `add` unchanged (incremental/dynamic path). +2 tests (recall parity vs
+  sequential; empty-index guard) → 25 tests pass. `find_package(Threads)` linked in `src/CMakeLists`.
+- **B3 — real 500K ImageNet index**: 500,000 images, CLIP ViT-L/14 768-d, M=32. Stream+save ~76 min,
+  GPU embed ~38 min, **parallel build 131 s**. **Recall@10 99.6%**, **same-class@10 75.7%**, mmap load
+  **871 ms** (1.6 GB), query **0.35–0.83 ms**. Artifacts: index.qfx 1.6 GB, embeddings.npy 1.5 GB,
+  metadata.db 69 MB. (Earlier P4 step run-verified the same pipeline at 300/20k before scaling.)
+- **B4 — efSearch tuning on real vectors**: swept ef; ~99% holds to ef≈20, **adopted ef=32**
+  (99.7% recall, 3.5× the throughput of ef=200). Backend + pipeline `search` defaults set to ef=32.
+- **B5 — web demo on the real index** (`backend/app.py`): `QF_INDEX_DIR` selects REAL mode —
+  mmap-load `index.qfx` + `metadata.db`, embed queries with `ClipEmbedder`, serve sharded images via
+  relative URLs, GPU warmup at startup. No env var ⇒ unchanged MOCK catalog (A7), `python_api` test
+  still green. `/health` now reports `mode` + `embedder`.
+
 ## Pre-data hardening (before the real 500K run)
 A file review before bucket B surfaced three fixes (all tested on synthetic data):
 - **Batched `ClipEmbedder.embed_images`** (`python/qf_pipeline/embedder.py`): embeds `batch_size`

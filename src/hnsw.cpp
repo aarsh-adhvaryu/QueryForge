@@ -1,9 +1,12 @@
 #include "queryforge/hnsw.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <stdexcept>
+#include <thread>
 
 #include "visited_set.hpp"
 
@@ -260,6 +263,118 @@ std::uint32_t HnswIndex::add(const float* vec) {
     entry_point_ = id;
   }
   return id;
+}
+
+void HnswIndex::link_node(std::uint32_t id, std::mutex* locks, std::size_t nlocks) {
+  // The node's vector and layer are already in place (phase A); here we only add edges. Mirrors the
+  // wiring half of add(), but every link-block mutation is guarded by that block's striped lock.
+  const float* dst = vector_at(id);
+  const int node_layer = node_layer_[id];
+  std::uint32_t entry = entry_point_;
+  const int top = max_layer_;  // fixed for the whole parallel build (set in phase A)
+
+  // Phase 1: descend the layers above this node's, refining the entry point (read-only).
+  for (int layer = top; layer > node_layer; --layer)
+    entry = greedy_search_layer(dst, entry, layer, nullptr);
+
+  // Phase 2: wire this node into each of its layers.
+  for (int layer = std::min(node_layer, top); layer >= 0; --layer) {
+    const std::size_t m = max_M_for(layer);
+    std::vector<Neighbor> candidates = search_layer(dst, entry, layer, ef_construction_, nullptr);
+    std::vector<Neighbor> selected = candidates;
+    select_neighbors(selected, m);
+
+    // Write my own block under my lock.
+    {
+      std::lock_guard<std::mutex> g(locks[id % nlocks]);
+      std::uint32_t* myb = link_block(id, layer);
+      myb[0] = static_cast<std::uint32_t>(selected.size());
+      for (std::size_t i = 0; i < selected.size(); ++i) myb[1 + i] = selected[i].id;
+    }
+
+    // Reverse edges: lock each neighbor individually while editing its block (one lock at a time →
+    // no deadlock). Same prune-on-overflow rule as add().
+    for (const Neighbor& nb : selected) {
+      std::lock_guard<std::mutex> g(locks[nb.id % nlocks]);
+      std::uint32_t* nbb = link_block(nb.id, layer);
+      const std::uint32_t cnt = nbb[0];
+      if (cnt < m) {
+        nbb[1 + cnt] = id;
+        nbb[0] = cnt + 1;
+      } else {
+        const float* vnb = vector_at(nb.id);
+        std::vector<Neighbor> cand;
+        cand.reserve(cnt + 1);
+        for (std::uint32_t i = 0; i < cnt; ++i)
+          cand.push_back({distance(vnb, vector_at(nbb[1 + i])), nbb[1 + i]});
+        cand.push_back({distance(vnb, vector_at(id)), id});
+        select_neighbors(cand, m);
+        nbb[0] = static_cast<std::uint32_t>(cand.size());
+        for (std::size_t i = 0; i < cand.size(); ++i) nbb[1 + i] = cand[i].id;
+      }
+    }
+
+    if (!candidates.empty()) {
+      const auto nearest = std::min_element(
+          candidates.begin(), candidates.end(),
+          [](const Neighbor& a, const Neighbor& b) { return a.distance < b.distance; });
+      entry = nearest->id;
+    }
+  }
+}
+
+void HnswIndex::add_batch_parallel(const float* data, std::size_t n, unsigned threads) {
+  if (n == 0) return;
+  if (num_nodes_ != 0)
+    throw std::logic_error("add_batch_parallel requires an empty index (static build-once path)");
+  if (threads == 0) threads = std::max(1u, std::thread::hardware_concurrency());
+
+  // --- Phase A (single-threaded, deterministic): size storage, store vectors, roll layers. ---
+  // Allocating to the final size up front means the arrays never reallocate in phase B, so the
+  // unlocked reads in search_layer can never touch freed memory.
+  vectors_.resize(n * dim_);
+  links0_.assign(n * stride0_, 0);
+  node_layer_.assign(n, 0);
+  links_upper_.assign(n, {});
+  int top = 0;
+  std::uint32_t entry = 0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const float* src = data + i * dim_;
+    float* dst = &vectors_[i * dim_];
+    if (metric_ == Metric::Cosine)
+      l2_normalize(src, dst, dim_);
+    else
+      std::copy(src, src + dim_, dst);
+    const int lyr = random_layer();
+    node_layer_[i] = lyr;
+    if (lyr > 0) links_upper_[i].assign(static_cast<std::size_t>(lyr) * strideU_, 0);
+    if (lyr > top) {
+      top = lyr;
+      entry = static_cast<std::uint32_t>(i);
+    }
+  }
+  num_nodes_ = n;  // all nodes are now visible to searches; storage is frozen at this size
+  max_layer_ = top;
+  entry_point_ = entry;
+
+  // --- Phase B (parallel): wire every node's edges. ---
+  // Striped lock pool: far fewer than n locks, indexed by node id. Collisions cause only rare,
+  // harmless false contention (two unrelated nodes briefly serialize) — never incorrectness.
+  constexpr std::size_t kNumLocks = 4096;
+  std::unique_ptr<std::mutex[]> locks(new std::mutex[kNumLocks]);
+
+  std::atomic<std::size_t> next{0};
+  auto worker = [&]() {
+    for (;;) {
+      const std::size_t i = next.fetch_add(1, std::memory_order_relaxed);
+      if (i >= n) break;
+      link_node(static_cast<std::uint32_t>(i), locks.get(), kNumLocks);
+    }
+  };
+  std::vector<std::thread> pool;
+  pool.reserve(threads);
+  for (unsigned t = 0; t < threads; ++t) pool.emplace_back(worker);
+  for (auto& th : pool) th.join();
 }
 
 std::vector<Neighbor> HnswIndex::search(const float* query, std::size_t k, std::size_t ef,

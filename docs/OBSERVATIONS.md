@@ -5,6 +5,103 @@ behind decisions. Newest entries on top.
 
 ---
 
+## B5 — web demo on the real 500K index
+
+- **Wired the FastAPI backend to the real index** behind a `QF_INDEX_DIR` env var: set ⇒ REAL mode
+  (mmap-load `index.qfx` + open `metadata.db` + `ClipEmbedder`); unset ⇒ the A7 MOCK catalog,
+  unchanged. One backend, two modes, identical endpoints — the `python_api` smoke test stays green.
+- **Three real-data adaptations:** (1) images are sharded into subdirs, so the served URL is the path
+  *relative* to the images root, not `basename` (which would collide/lose the subdir); (2) a GPU
+  **warmup** call at startup — the first CLIP forward pass does cuDNN autotuning (~430 ms), so we burn
+  it once at boot and real queries land at ~15 ms instead of a slow first hit; (3) `/health` reports
+  `mode` + `embedder` so you can tell which catalog is loaded.
+- **Verified end-to-end in the browser:** grid of real photos, click-to-find-similar, upload-to-search
+  all return semantically correct neighbors (plane→planes, flamingo→flamingos, a poncho query even
+  surfaces a *stole* — a different class that genuinely looks alike, which the old color-histogram
+  embedder could never do).
+- **Honest latency note:** the ~15 ms a user feels is almost all CLIP query embedding on GPU; the HNSW
+  search itself is <1 ms even over 500K. The engine isn't the bottleneck — the model is.
+
+---
+
+## B4 — efSearch tuning on real data (lower ef, same recall)
+
+- **Swept ef on the fixed 500K index** (M=32), recall@10 vs exact brute force over 500 queries.
+  Result: **~99% recall holds all the way down to ef≈20** (4.6× faster than ef=200); the high-99s
+  sweet spot is **ef=32** (99.7% recall, 3.5× the throughput — 1171 → 4097 qps).
+- **The lesson the journal predicted, confirmed:** ef=200 was inherited from *synthetic* uniform-random
+  data, the worst case for ANN (every point ~equidistant → you must explore a huge beam). Real CLIP
+  embeddings cluster, so the true neighbors are found after exploring very few candidates. **Don't
+  carry synthetic ef into real data.** Adopted ef=32 as the default operating point (backend +
+  pipeline). Caveat: in the live demo this is invisible (CLIP embed dominates); it's a win for the
+  engine's standalone/offline throughput.
+
+---
+
+## B3 — the real 500K ImageNet index (the deliverable)
+
+- **Built the headline artifact:** 500,000 ImageNet images → CLIP ViT-L/14 768-d → HNSW (M=32). Timings:
+  stream+save ~76 min (network I/O, the true bottleneck), GPU embed ~38 min (~4.6 ms/img),
+  **parallel build 131 s** (would be ~20 min single-threaded). **Recall@10 99.6%, same-class@10 75.7%**,
+  mmap load 871 ms, query 0.35–0.83 ms.
+- **Same-class@10 is the metric that earns its keep at scale:** 2.9% at 300 imgs → 55.8% at 20k → 75.7%
+  at 500k. It's starved when classes are sparse (≈0.3 imgs/class at n=300) and only becomes meaningful
+  once each class is densely populated (~390/class at 500k). It measures something recall-vs-bruteforce
+  can't: whether the *embeddings + search together* actually retrieve semantically related images.
+- **Robustness, learned the real-data way:** the stream hit corrupt EXIF, truncated JPEGs, and one
+  remote disconnect — the pipeline (PIL + datasets retry) absorbed all of them and finished clean. Real
+  datasets are messy; the loader has to tolerate it.
+- **Crash-safety paid for itself in design:** embeddings are checkpointed to `embeddings.npy` right
+  after the ~38-min GPU pass, so any later failure (build/disk) never costs the expensive work. Also
+  enabled the B4 ef sweep to reuse the embeddings without re-embedding.
+
+---
+
+## B2 — parallel build (the headline perf win), measured
+
+- **Built `add_batch_parallel`:** a static build-once path. Phase A (single-threaded, deterministic)
+  pre-sizes *all* storage, stores/normalizes every vector, and rolls every node's layer with the
+  seeded RNG — crucially this freezes the arrays at final size so phase B's lock-free reads in
+  `search_layer` can never touch reallocated memory. Phase B runs worker threads off an atomic
+  counter, each fully wiring one node's edges, with **striped per-node locks** (a 4096-mutex pool
+  indexed by node id) guarding every link-block write (own + reverse edges). Only one lock is ever
+  held at a time → no deadlock.
+- **Result: 9.3× on 16 cores** (40k×384, M32/efc200: 184.6 s → 19.9 s; 8 threads = 7.6×). Scaling is
+  near-linear to 8 then flattens — same memory-bandwidth wall as P1/P1.5, now hit from many cores at
+  once. So parallelism is the big lever it was predicted to be, but it doesn't escape the memory wall.
+- **Honesty about the data race (the interesting part):** writes are locked; the concurrent *reads*
+  in `search_layer` are deliberately **not** (locking reads would serialize the whole build and
+  erase the win — this is what hnswlib does too). It's memory-safe because blocks are fixed-size and
+  never reallocate (phase A); the worst case is a search transiently reading a stale neighbor id or
+  count, which only nudges which candidates are found — so correctness is validated by **measurement**
+  (`Hnsw.ParallelBuildMatchesSequentialRecall`: parallel within 0.05 of sequential), not by claiming
+  determinism. The graph is intentionally *not* bit-identical run-to-run.
+- **Sequential `add` left untouched** — it's the readable teaching version and the future
+  dynamic-insert path; parallel build is a separate method, gated to an empty index.
+
+---
+
+## P4 — real CLIP pipeline run-verified on GPU (bucket B begins)
+
+- **First complete `build_real.py` run.** On the Studio GPU (RTX PRO 6000 Blackwell, 96 GB; torch
+  CUDA OK), 300 real fashion images: CLIP **ViT-L/14 → 768-d at ~5 ms/img** (vs the minutes/img CPU
+  runs that kept getting interrupted — the GPU is the whole point of bucket B). Build 0.29 s,
+  **Recall@10 = 100%**, and neighbors are semantically correct (navy check shirt → 8/8 check shirts).
+  Every seam (stream → embed → HNSW → SQLite → query → recall) now verified on *real* vectors.
+- **Embedding budget extrapolation:** ~5 ms/img ⇒ ~42 min of pure GPU embedding for 500K (batch 256);
+  streaming download/decode will likely dominate wall-clock. Re-measure on the real run.
+- **Dataset decision for the 500K target:** committing to true 500K scale now. Probed HF under
+  `datasets` 5.0: DiffusionDB/Imagenette are dead (loading-script based, unsupported); ImageNet-1k
+  and `timm/imagenet-1k-wds` are gated. **Ungated + image-bytes + ≥500K that stream today:**
+  `pixparse/cc3m-wds` (~2.9M captioned web images) and `cc12m-wds` (~12M). Plan: **ImageNet-1k**
+  (1.28M, 1000 clean classes → enables a *same-class@k* quality metric beyond recall-vs-bruteforce)
+  once a token is provided; **CC3M is the no-token fallback**.
+- **Next:** make the dataset loader pluggable in `build_real.py`, swap fashion → chosen 500K set,
+  then sequence the **parallel build perf pass before** the full 500K build (single-threaded build is
+  ~O(N^1.4) cache-bound and dim768/M32 is ~6× heavier per distance than the synthetic dim128/M16).
+
+---
+
 ## Pre-data review + hardening (before bucket B)
 
 Reviewed all files before pouring real data through the engine. No correctness bugs (sources are

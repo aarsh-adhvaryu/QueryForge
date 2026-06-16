@@ -1,8 +1,8 @@
 # CLAUDE.md — guidance for AI assistants working in this repo
 
-QueryForge is a **from-scratch C++ HNSW vector search engine** (+ a planned reverse-image-search
-demo). It's the owner's portfolio/learning project. Read this first; it tells you what exists, how
-to build it, the conventions to follow, and where to resume.
+QueryForge is a **from-scratch C++ HNSW vector search engine** (+ a working reverse-image-search
+demo over 500K real images). It's the owner's portfolio/learning project. Read this first; it tells
+you what exists, how to build it, the conventions to follow, and where to resume.
 
 ## Working style (important — the owner is learning)
 
@@ -30,27 +30,36 @@ Stages follow the plan in `docs/architecture.md` and the project plan. Done so f
   dry-run; `ClipEmbedder` for the GPU/laptop) + SQLite metadata + dry-run.
 - **A7** — FastAPI backend + React frontend over a mock catalog; full vertical slice works.
 
-**Bucket A is COMPLETE.** What remains is **bucket B (needs the laptop/GPU):** download the real
-500K-image dataset, run real CLIP embeddings (swap `HistogramEmbedder` → `ClipEmbedder`), tune the
-index on real data, and re-measure final benchmarks on the local 5070 Ti / Core Ultra 9. Also a
-queued perf pass: fix the O(N²) build (reusable visited array) and add parallel build. See
-`docs/CHANGELOG.md` and `docs/BASELINES.md`.
+**Bucket B (real data + performance) — engine COMPLETE:**
+- **B1** — pluggable real-dataset loader (`build_real.py`: imagenet / cc3m / fashion), sharded image
+  dirs, embedding checkpointing, same-class@k metric.
+- **B2** — parallel multi-threaded build (`HnswIndex::add_batch_parallel`): **9.3× on 16 cores**,
+  recall parity with sequential (striped per-node locks; lock-free reads). Sequential `add` unchanged.
+- **B3** — **real 500K ImageNet index** (CLIP ViT-L/14, 768-d, M=32): **Recall@10 99.6%**,
+  **same-class@10 75.7%**, parallel build 131 s, mmap load 871 ms, query 0.35–0.83 ms.
+- **B4** — efSearch tuning on real vectors: **ef=32 is the operating point** (99.7% recall, 3.5×
+  throughput vs ef=200). Backend + pipeline `search` defaults now ef=32.
+- **B5** — web demo wired to the real index via `QF_INDEX_DIR` (real vs mock mode), CLIP query
+  embedding, sharded-image serving, GPU warmup. Mock A7 path unchanged; `python_api` test still green.
 
 Build everything (incl. Python module + web tests): `cmake -S . -B build -DQF_BUILD_PYTHON=ON`.
+**25 tests pass.** See `docs/CHANGELOG.md`, `docs/BASELINES.md`, `docs/OBSERVATIONS.md` for numbers.
 
-**Currently in progress — real data (P3/P4):** decided ViT-L/14 → 768-d, "start small then scale".
-`open_clip_torch` + `datasets` are installed; dataset = `ashraq/fashion-product-images-small` (real
-fashion products w/ articleType/baseColour/productDisplayName). Real-data build script:
-`python/qf_pipeline/build_real.py`. NOTE the ViT-L/14 pretrained tag is `laion2b_s32b_b82k` (the
-ClipEmbedder default tag is for B/32). **To resume:** toggle the Studio GPU ON, then
-`PYTHONPATH=build/python:python python -m qf_pipeline.build_real --limit 300 --out /tmp/qf_real`
-(small validation first; raise `--limit` to scale). CPU works but ViT-L/14 is slow — the last run
-was interrupted mid-embedding, so build_real is not yet run-verified.
+**The ONLY thing left: re-measure on the owner's local machine** (RTX 5070 Ti + Core Ultra 9) — the
+stated local-first end goal; cloud was used only for bulk embedding. To resume on `local`: build with
+`-DQF_BUILD_PYTHON=ON`, copy/rebuild the 500K artifacts, re-run `qf_recall`/`qf_persist` and the demo,
+and fill in the `local` rows in `docs/BASELINES.md`. Optional: an `M` sweep (memory/build vs recall).
 
-## Performance & time complexity — investigate next
+**Real-data run reference:** dataset = `ILSVRC/imagenet-1k` (gated; `huggingface-cli login`), CLIP
+ViT-L/14 pretrained tag `laion2b_s32b_b82k` (768-d). Rebuild the catalog with:
+`python -m qf_pipeline.build_real --dataset imagenet --limit 500000 --threads 16 --out <dir>`, then
+serve with `QF_INDEX_DIR=<dir> uvicorn backend.app:app`. The 500K artifacts (index.qfx/embeddings.npy/
+metadata.db/images) live outside the repo (gitignored) under the studio's `qf_data/im500k`.
 
-The engine is correct and hits its recall target, but it has **not** had a performance pass. Before
-scaling to the 500K dataset, look into these (highest priority first).
+## Performance & time complexity
+
+The engine has had a performance pass (P1, P1.5, B2). Build complexity was measured and corrected;
+the parallel build is **done** and is the headline win. Remaining ideas are noted at the end.
 
 **Build complexity — corrected by measurement (see `docs/OBSERVATIONS.md`):** the build is
 ~**O(N^1.4)** wall-clock, *not* O(N²). The earlier "O(N²) from the `visited` allocation" claim was
@@ -60,8 +69,9 @@ diversity heuristic (≈ O(efConstruction·M) per insert), amplified by **cache 
 exceeds L3 (~64k vectors at dim 128) and because the nested-`std::vector` adjacency scatters memory.
 
 Real build-speed levers, in order:
-- **Parallel multi-threaded build** — the biggest wall-clock win (÷ cores). `VisitedSet` is
-  `thread_local`, so each thread already gets its own scratch — the groundwork is in place.
+- **Parallel multi-threaded build** — **DONE (B2): 9.3× on 16 cores** via `add_batch_parallel`
+  (pre-sized storage + striped per-node locks; lock-free reads). Scaling flattens past 8 threads
+  because the build is memory-bandwidth bound (the same vector-read wall). Biggest wall-clock win.
 - **efConstruction tuning** — linear lever (efc 200→100 ≈ halves build time; measured ~no recall
   loss). Pick the lowest efc that holds recall.
 - **Flatten layer-0 adjacency** → DONE (`links0_` flat array + per-node upper blocks + prefetch);
@@ -134,7 +144,10 @@ bulk embedding only, never a runtime dependency. Re-measure baselines on `local`
 ## Key decisions of record
 
 - Index is **static build + concurrent reads now; dynamic insertion later** (after résumé).
-- **Single-threaded build now**; parallel build is a queued, separately-benchmarked enhancement.
-- Concurrency claim to make honestly: "lock-free concurrent **reads**" (not lock-free writes).
+- **Parallel build is DONE (B2)** via `add_batch_parallel` (separately benchmarked, 9.3×). The
+  single-threaded `add` is kept as the incremental/dynamic-insert path.
+- **Operating point on real data: ef=32** (B4) — 99.7% recall, 3.5× throughput vs the old ef=200.
+- Concurrency claim to make honestly: "lock-free concurrent **reads**" (not lock-free writes). The
+  parallel build locks **writes** (striped per-node) and leaves reads lock-free.
 - Open decisions deferred to their stage: dataset choice, embedding model/dimension (512 vs 768),
   SQLite vs Postgres. See the project plan and `docs/OBSERVATIONS.md`.

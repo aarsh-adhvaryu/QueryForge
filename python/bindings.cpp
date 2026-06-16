@@ -61,6 +61,24 @@ PYBIND11_MODULE(queryforge, m) {
           },
           py::arg("vectors"), "Insert n vectors from an (n, dim) array; returns the list of ids.")
 
+      .def(
+          "add_batch_parallel",
+          [](HnswIndex& self, FloatArray mat, unsigned threads) {
+            if (mat.ndim() != 2 || static_cast<std::size_t>(mat.shape(1)) != self.dim())
+              throw std::invalid_argument("add_batch_parallel() expects a 2-D array of shape (n, dim)");
+            const std::size_t n = static_cast<std::size_t>(mat.shape(0));
+            {
+              py::gil_scoped_release release;  // let the C++ worker threads run without the GIL
+              self.add_batch_parallel(mat.data(), n, threads);
+            }
+            std::vector<std::uint32_t> ids(n);
+            for (std::size_t i = 0; i < n; ++i) ids[i] = static_cast<std::uint32_t>(i);
+            return ids;
+          },
+          py::arg("vectors"), py::arg("threads") = 0,
+          "Static build-once: insert n vectors from an (n, dim) array using `threads` worker threads "
+          "(0 = all cores). Requires an empty index. Returns ids 0..n-1.")
+
       .def("reserve", &HnswIndex::reserve, py::arg("n"),
            "Pre-allocate capacity for n total vectors before a bulk build (optional, faster).")
 

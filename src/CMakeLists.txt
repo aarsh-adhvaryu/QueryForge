@@ -18,6 +18,10 @@ target_include_directories(queryforge
 
 target_compile_features(queryforge PUBLIC cxx_std_17)
 
+# std::thread in the parallel build (add_batch_parallel) needs the platform threads library.
+find_package(Threads REQUIRED)
+target_link_libraries(queryforge PUBLIC Threads::Threads)
+
 # Position-independent code so the static lib can be linked into the shared Python module.
 set_target_properties(queryforge PROPERTIES POSITION_INDEPENDENT_CODE ON)
 

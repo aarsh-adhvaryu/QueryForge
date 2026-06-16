@@ -6,6 +6,8 @@ on, because numbers only mean something relative to hardware.
 
 **Machines:**
 - `lightning` — Lightning AI Studio: Intel (AVX2/FMA/SSE4.2), 4 cores, 15 GB RAM, g++ 13.3.
+- `studio-gpu` — Lightning Studio (bucket B): 16 cores + RTX PRO 6000 Blackwell (96 GB), used for
+  bulk CLIP embedding and the parallel build. Cloud convenience only, not a runtime dependency.
 - `local` — owner's machine: Intel Core Ultra 9 (AVX2, no AVX-512) + RTX 5070 Ti (to be filled in).
 
 ---
@@ -136,3 +138,67 @@ prefetch (dim=128, M=16, efc=200):
 Recall unchanged (80k @ ef=200 = 70.1%). The constant improved but the *slope* didn't — confirming
 the remaining bottleneck is the random 512-B vector reads exceeding L3 (the memory wall), not the
 adjacency layout. Next real levers: parallel build, efConstruction.
+
+### P2 — Parallel build (`add_batch_parallel`)  [studio-gpu, 16 cores]
+
+Multi-threaded static build: pre-size all storage (phase A), then wire every node's edges across
+worker threads under striped per-node locks (phase B). Measured on N=40000, dim=384, M=32, efc=200:
+
+| build | time | speedup |
+|-------|------|---------|
+| sequential (`add_batch`) | 184.6 s | 1.0× |
+| parallel, 4 threads  | 46.8 s | 3.9× |
+| parallel, 8 threads  | 24.2 s | 7.6× |
+| parallel, 16 threads | 19.9 s | 9.3× |
+
+Near-linear to 8 threads, then diminishing (9.3× on 16 cores) — the build is memory-bandwidth bound
+(the same random-vector-read wall from P1/P1.5), so it can't scale perfectly with core count. Recall
+parity with the sequential build is asserted by `Hnsw.ParallelBuildMatchesSequentialRecall`
+(within 0.05 of sequential; not bit-identical because edge formation depends on thread interleaving).
+
+## B3 — Real 500K ImageNet index (the headline)  [studio-gpu]
+
+Dataset: 500,000 images streamed from ImageNet-1k, embedded with **CLIP ViT-L/14 (768-d, cosine)**.
+Index params: M=32, efConstruction=200. End-to-end via `python/qf_pipeline/build_real.py`.
+
+| stage | time | rate / note |
+|-------|------|-------------|
+| stream + save 500K images | 4543.7 s (~76 min) | network I/O bound; survived corrupt/truncated files + 1 disconnect-retry |
+| CLIP embed (GPU) | 2309.8 s (~38 min) | ~4.6 ms/img, batched 256 |
+| **parallel build (16 threads)** | **130.6 s (~2.2 min)** | top layer 4; ≈20 min if single-threaded (per P2's 9.3×) |
+
+**Quality** (real, clustered data — the easy case for ANN, unlike uniform-random synthetic):
+
+| metric | value |
+|--------|-------|
+| Recall@10 vs brute force (ef=200) | **99.6%** |
+| Same-class@10 (ImageNet labels, ef=200) | **75.7%** (was 55.8% at 20k — denser classes ⇒ more same-class neighbors exist) |
+
+**Serving** (build-once / serve-many payoff):
+
+| metric | value |
+|--------|-------|
+| mmap load of 1.6 GB `.qfx` | **871 ms** (vs ~40 min to re-embed + rebuild) |
+| query latency @ ef=50 / 100 / 200 | **0.35 / 0.49 / 0.83 ms** (≈2870 / 2030 / 1210 qps, single-thread) |
+
+Artifacts: `index.qfx` 1.6 GB (~3.2 KB/vector = 768·4 B vector + edges), `embeddings.npy` 1.5 GB,
+`metadata.db` 69 MB. Re-measure on `local` (Core Ultra 9 / RTX 5070 Ti) when available.
+
+## B4 — efSearch tuning on the real 500K vectors  [studio-gpu]
+
+Fixed index (M=32). ef swept; Recall@10 vs exact brute force over 500 sampled queries, single-thread.
+
+| ef | recall@10 | avg latency | qps | vs ef=200 |
+|----|-----------|-------------|-----|-----------|
+| 16 | 98.7% | 0.165 ms | 6053 | 5.2× |
+| 20 | 99.3% | 0.185 ms | 5408 | 4.6× |
+| 24 | 99.5% | 0.205 ms | 4880 | 4.2× |
+| **32** | **99.7%** | **0.244 ms** | **4097** | **3.5×** |
+| 64 | 100.0% | 0.382 ms | 2615 | 2.2× |
+| 200 | 100.0% | 0.854 ms | 1171 | 1× |
+
+**~99% recall holds down to ef≈20** (4.6× faster than ef=200). Adopted operating point: **ef=32**
+(99.7% recall, 3.5× throughput, −0.3 pt recall). ef=200 was synthetic-worst-case overkill — real CLIP
+embeddings cluster, so the true neighbors are found after exploring far fewer candidates. Note: in the
+live web demo end-to-end latency is dominated by CLIP query embedding (~15 ms GPU); ef tuning matters
+most for the engine's standalone/offline throughput (the qps column). Backend defaults now use ef=32.

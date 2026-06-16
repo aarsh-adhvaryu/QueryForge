@@ -1,12 +1,22 @@
 """QueryForge demo backend (FastAPI).
 
-On startup it builds a small *mock* catalog (synthetic images + HistogramEmbedder) so the API is
-fully functional without the real dataset. When the real CLIP pipeline and dataset arrive
-(bucket B), only the embedder + catalog source change — these endpoints stay the same.
+Two modes, chosen at startup by the `QF_INDEX_DIR` environment variable:
+
+  * REAL (QF_INDEX_DIR set): mmap-load a prebuilt index (`index.qfx` + `metadata.db` + `images/`
+    produced by `qf_pipeline.build_real`) and embed queries with the real `ClipEmbedder`. This is
+    the 500K-image reverse-image-search demo. Startup is ~1 s (mmap load) + CLIP model load.
+  * MOCK (default, no env var): build a tiny synthetic catalog with `HistogramEmbedder` at import
+    time, so the API is fully functional with no dataset or GPU — the A7 vertical slice.
+
+Only the index/embedder/image source differ; the endpoints below are identical in both modes.
 
 Run:
     cmake -S . -B build -DQF_BUILD_PYTHON=ON && cmake --build build -j
-    PYTHONPATH=build/python:python uvicorn backend.app:app --reload
+    # mock demo:
+    PYTHONPATH=build/python:python uvicorn backend.app:app
+    # real 500K demo:
+    QF_INDEX_DIR=/teamspace/studios/this_studio/qf_data/im500k \
+        PYTHONPATH=build/python:python uvicorn backend.app:app
 Then open http://127.0.0.1:8000/
 
 Endpoints (from the project proposal):
@@ -27,23 +37,48 @@ from fastapi.staticfiles import StaticFiles
 
 import queryforge as qf
 from qf_pipeline import HistogramEmbedder, build_catalog, search_similar
+from qf_pipeline.metadata import MetadataStore
 from qf_pipeline.synthetic import generate_catalog
 
-# --- Build the mock catalog once at import time ------------------------------------------
-_WORKDIR = tempfile.mkdtemp(prefix="qf_backend_")
-_EMBEDDER = HistogramEmbedder(grid=4)
-_PRODUCTS = generate_catalog(_WORKDIR, per_category=15)
-_INDEX, _STORE = build_catalog(_PRODUCTS, _EMBEDDER, metric=qf.Metric.Cosine)
+# Uploaded query images go to their own temp dir (never the served catalog dir).
+_QUERYDIR = tempfile.mkdtemp(prefix="qf_query_")
+
+_INDEX_DIR = os.environ.get("QF_INDEX_DIR")
+if _INDEX_DIR:
+    # --- REAL mode: load the prebuilt 500K index; embed queries with CLIP -------------------
+    from qf_pipeline import ClipEmbedder
+
+    _MODE = "real"
+    _IMAGES_DIR = os.path.join(_INDEX_DIR, "images")
+    _INDEX = qf.HnswIndex.load(os.path.join(_INDEX_DIR, "index.qfx"))   # mmap, ~1 s for 1.6 GB
+    _STORE = MetadataStore(os.path.join(_INDEX_DIR, "metadata.db"))
+    _EMBEDDER = ClipEmbedder(model_name=os.environ.get("QF_CLIP_MODEL", "ViT-L-14"),
+                             pretrained=os.environ.get("QF_CLIP_PRETRAINED", "laion2b_s32b_b82k"))
+    # Warm up the GPU once (first CLIP forward pass does cuDNN autotuning, ~0.4 s) so the first real
+    # user query is fast, not cold.
+    _warm = _STORE.get(0)
+    if _warm is not None and os.path.exists(_warm.image_path):
+        _EMBEDDER.embed_image(_warm.image_path)
+else:
+    # --- MOCK mode: build a tiny synthetic catalog at import time ----------------------------
+    _MODE = "mock"
+    _IMAGES_DIR = tempfile.mkdtemp(prefix="qf_backend_")
+    _EMBEDDER = HistogramEmbedder(grid=4)
+    _PRODUCTS = generate_catalog(_IMAGES_DIR, per_category=15)
+    _INDEX, _STORE = build_catalog(_PRODUCTS, _EMBEDDER, metric=qf.Metric.Cosine)
 
 _FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
 app = FastAPI(title="QueryForge demo", version=qf.__version__)
-# Serve the synthetic product images at /images/<filename>.
-app.mount("/images", StaticFiles(directory=_WORKDIR), name="images")
+# Serve catalog images at /images/<relpath>. Real images are sharded into subdirs, so we key the
+# URL on the path relative to the images root (basename alone would collide / lose the subdir).
+app.mount("/images", StaticFiles(directory=_IMAGES_DIR), name="images")
 
 
-def _image_url(image_path: str) -> str:
-    return f"/images/{os.path.basename(image_path)}"
+def _image_url(image_path: str):
+    if not image_path:
+        return None
+    return f"/images/{os.path.relpath(image_path, _IMAGES_DIR)}"
 
 
 def _enrich(results: list[dict]) -> list[dict]:
@@ -73,10 +108,12 @@ def index():
 def health():
     return {
         "status": "ok",
+        "mode": _MODE,
         "vector_count": len(_INDEX),
         "dim": _INDEX.dim,
         "top_layer": _INDEX.max_layer,
         "metric": "cosine",
+        "embedder": type(_EMBEDDER).__name__,
         "version": qf.__version__,
     }
 
@@ -96,7 +133,7 @@ def catalog(offset: int = 0, limit: int = 24):
 
 
 @app.get("/search/id/{product_id}")
-def search_by_id(product_id: int, k: int = 8, ef: int = 64):
+def search_by_id(product_id: int, k: int = 8, ef: int = 32):
     p = _STORE.get(product_id)
     if p is None:
         raise HTTPException(status_code=404, detail="product not found")
@@ -108,11 +145,11 @@ def search_by_id(product_id: int, k: int = 8, ef: int = 64):
 
 
 @app.post("/search/image")
-async def search_by_image(request: Request, k: int = 8, ef: int = 64):
+async def search_by_image(request: Request, k: int = 8, ef: int = 32):
     body = await request.body()
     if not body:
         raise HTTPException(status_code=400, detail="empty request body; POST raw image bytes")
-    tmp = os.path.join(_WORKDIR, f"_query_{int(time.time()*1e6)}.img")
+    tmp = os.path.join(_QUERYDIR, f"_query_{int(time.time()*1e6)}.img")
     with open(tmp, "wb") as f:
         f.write(body)
     try:
