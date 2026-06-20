@@ -193,6 +193,7 @@ idx.save("index.qfx");  idx2 = qf.HnswIndex.load("index.qfx")
 
 ## Documentation
 
+- [docs/HANDOFF.md](docs/HANDOFF.md) — finishing the local-machine re-measurement from a fresh clone.
 - [docs/architecture.md](docs/architecture.md) — how the pieces fit and why.
 - [docs/OBSERVATIONS.md](docs/OBSERVATIONS.md) — running journal of decisions and findings.
 - [docs/BASELINES.md](docs/BASELINES.md) — recorded performance numbers per stage.

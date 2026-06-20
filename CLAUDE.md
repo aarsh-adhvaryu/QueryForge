@@ -46,9 +46,10 @@ Build everything (incl. Python module + web tests): `cmake -S . -B build -DQF_BU
 **25 tests pass.** See `docs/CHANGELOG.md`, `docs/BASELINES.md`, `docs/OBSERVATIONS.md` for numbers.
 
 **The ONLY thing left: re-measure on the owner's local machine** (RTX 5070 Ti + Core Ultra 9) — the
-stated local-first end goal; cloud was used only for bulk embedding. To resume on `local`: build with
-`-DQF_BUILD_PYTHON=ON`, copy/rebuild the 500K artifacts, re-run `qf_recall`/`qf_persist` and the demo,
-and fill in the `local` rows in `docs/BASELINES.md`. Optional: an `M` sweep (memory/build vs recall).
+stated local-first end goal; cloud was used only for bulk embedding. **→ Full step-by-step in
+[docs/HANDOFF.md](docs/HANDOFF.md)** (written for a cold start on the laptop). TL;DR: build with
+`-DQF_BUILD_PYTHON=ON`, copy `embeddings.npy` over, run `python -m qf_pipeline.rebuild_index` to get
+local build/load/recall/ef numbers, fill the `local` rows in `docs/BASELINES.md`. Optional: `M` sweep.
 
 **Real-data run reference:** dataset = `ILSVRC/imagenet-1k` (gated; `huggingface-cli login`), CLIP
 ViT-L/14 pretrained tag `laion2b_s32b_b82k` (768-d). Rebuild the catalog with:
