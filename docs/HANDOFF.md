@@ -25,6 +25,11 @@ nvidia-smi && python -c "import torch; print('cuda:', torch.cuda.is_available())
 
 ## Getting the data — pick one
 
+> The artifacts are also backed up on Hugging Face (private dataset
+> `aarsh-adhvaryu/queryforge-imagenet-500k`). Pull any file without the Studio:
+> `huggingface_hub.hf_hub_download(repo, "embeddings.npy", repo_type="dataset")` (also `index.qfx`,
+> `metadata.db`, `images.tar`). This is the easiest source for Path A below.
+
 **Path A — benchmark only (recommended, fast).** Copy just **`embeddings.npy`** (1.5 GB) from the
 Studio (`/teamspace/studios/this_studio/qf_data/im500k/embeddings.npy`) — e.g. download via the
 Lightning UI, or `scp`/cloud bucket. Then rebuild + benchmark locally (no GPU, no Hugging Face):

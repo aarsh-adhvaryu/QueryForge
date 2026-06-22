@@ -55,7 +55,10 @@ local build/load/recall/ef numbers, fill the `local` rows in `docs/BASELINES.md`
 ViT-L/14 pretrained tag `laion2b_s32b_b82k` (768-d). Rebuild the catalog with:
 `python -m qf_pipeline.build_real --dataset imagenet --limit 500000 --threads 16 --out <dir>`, then
 serve with `QF_INDEX_DIR=<dir> uvicorn backend.app:app`. The 500K artifacts (index.qfx/embeddings.npy/
-metadata.db/images) live outside the repo (gitignored) under the studio's `qf_data/im500k`.
+metadata.db/images) live outside the repo (gitignored) under the studio's `qf_data/im500k` **and are
+backed up on Hugging Face** (private dataset `aarsh-adhvaryu/queryforge-imagenet-500k` — pull with
+`huggingface_hub.hf_hub_download`; `images.tar` holds the sharded images). Project stays on Lightning
+AI (the local-laptop port was dropped — 10 GB transfer not worth it at this scale).
 
 ## Performance & time complexity
 

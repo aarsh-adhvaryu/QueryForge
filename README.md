@@ -36,6 +36,10 @@ Measured on a Lightning Studio (16-core CPU + RTX PRO 6000); CLIP ViT-L/14 → 7
 See [docs/BASELINES.md](docs/BASELINES.md) for the full tables (including the ef-sweep and the build
 speedup curve) and [docs/OBSERVATIONS.md](docs/OBSERVATIONS.md) for the reasoning behind each result.
 
+**Prebuilt artifacts** (too large for git — embeddings, `.qfx` index, metadata, image tarball) are
+hosted on Hugging Face: [`aarsh-adhvaryu/queryforge-imagenet-500k`](https://huggingface.co/datasets/aarsh-adhvaryu/queryforge-imagenet-500k)
+(private). Rebuild/benchmark from them with `python -m qf_pipeline.rebuild_index`.
+
 ## Guiding principle: local-first
 
 The end goal is that everything runs on a single consumer machine (**RTX 5070 Ti** GPU + **Intel
